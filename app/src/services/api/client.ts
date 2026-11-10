@@ -1,10 +1,12 @@
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 /**
  * Resolves the backend API base URL dynamically:
  * 1. EXPO_PUBLIC_API_URL environment variable if provided.
  * 2. Constants.expoConfig?.hostUri host for LAN debugging on devices/simulators (port 5050).
- * 3. Default fallback: http://localhost:5050
+ *    On Android, if host is localhost / 127.0.0.1, it is mapped to 10.0.2.2 (host loopback).
+ * 3. Default fallback: http://10.0.2.2:5050 on Android, http://localhost:5050 on iOS/Web.
  */
 export function resolveApiBaseUrl(): string {
   const envUrl = process.env.EXPO_PUBLIC_API_URL;
@@ -16,11 +18,14 @@ export function resolveApiBaseUrl(): string {
   if (hostUri && typeof hostUri === 'string') {
     const host = hostUri.split(':')[0]?.trim();
     if (host && host.length > 0 && host !== 'undefined' && host !== 'null') {
+      if (Platform.OS === 'android' && (host === 'localhost' || host === '127.0.0.1')) {
+        return 'http://10.0.2.2:5050';
+      }
       return `http://${host}:5050`;
     }
   }
 
-  return 'http://localhost:5050';
+  return Platform.OS === 'android' ? 'http://10.0.2.2:5050' : 'http://localhost:5050';
 }
 
 /**
@@ -66,14 +71,16 @@ export interface ApiRequestOptions extends Omit<RequestInit, 'signal'> {
  */
 export async function apiRequest<T>(path: string, options?: ApiRequestOptions): Promise<T> {
   const baseUrl = resolveApiBaseUrl();
-  const url = path.startsWith('http://') || path.startsWith('https://')
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  let url = path.startsWith('http://') || path.startsWith('https://')
     ? path
-    : `${baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+    : `${baseUrl}${normalizedPath}`;
 
   const method = (options?.method ?? 'GET').toUpperCase();
   const defaultRetries = method === 'GET' || method === 'HEAD' ? 2 : 0;
   const maxRetries = options?.retries !== undefined ? options?.retries : defaultRetries;
   const timeoutMs = options?.timeoutMs ?? 8000;
+  let hasSwitchedToAndroidFallback = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     // If caller has already aborted, fail immediately without retrying
@@ -156,6 +163,21 @@ export async function apiRequest<T>(path: string, options?: ApiRequestOptions): 
         ? `Request timed out after ${timeoutMs}ms: ${path}`
         : (err as Error)?.message || 'Network request failed';
       const errorCode = isTimeoutError ? 'TIMEOUT' : 'NETWORK_ERROR';
+
+      // On Android, if a network error occurs when trying a LAN IP (e.g., http://192.168.x.x:5050),
+      // automatically fallback-retry against http://10.0.2.2:5050
+      if (
+        Platform.OS === 'android' &&
+        isNetworkError &&
+        !hasSwitchedToAndroidFallback &&
+        !url.includes('10.0.2.2') &&
+        (!path.startsWith('http://') && !path.startsWith('https://'))
+      ) {
+        hasSwitchedToAndroidFallback = true;
+        url = `http://10.0.2.2:5050${normalizedPath}`;
+        attempt = -1;
+        continue;
+      }
 
       // Retry on network errors or timeouts if retries remain
       if (attempt < maxRetries) {
