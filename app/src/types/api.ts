@@ -4,6 +4,14 @@
  * and server/services/mock_event.py.
  */
 
+export interface SeasonOption {
+  season: number;
+  seasonName: string;
+  shortName?: string;
+  isLive?: boolean;
+  eventsCount?: number;
+}
+
 export interface HealthResponse {
   status: string;
   season: number;
@@ -11,6 +19,8 @@ export interface HealthResponse {
   dataSource: 'live_api' | 'fallback_snapshot' | string;
   fetchedAt: string;
   eventsCount: number;
+  lastUpdated?: string;
+  availableSeasons?: SeasonOption[];
 }
 
 export interface TeamProfile {
@@ -54,7 +64,14 @@ export interface PeriodAverages {
   teleopAvg: number;
   endgameAvg: number;
   totalAvg: number;
+  avgWinningMargin?: number;
+  avgScoreMargin?: number;
+  avgPenaltiesAwarded?: number;
+  avgPenaltiesConceded?: number;
+  avgNetPenalties?: number;
 }
+
+export type EventAverages = PeriodAverages;
 
 export interface BestMatchPerformance {
   score: number;
@@ -103,6 +120,9 @@ export interface EventSummaryItem {
   endgameOpr: number;
   matchesPlayed: number;
   highScore: number;
+  hasQualMatches?: boolean;
+  hasTeamMatches?: boolean;
+  liveStreamUrl?: string | null;
 }
 
 export interface SeasonSummaryResponse {
@@ -115,6 +135,10 @@ export interface SeasonSummaryResponse {
   bestMatch: BestMatchPerformance | null;
   bestEvent: BestEventSummary | null;
   events: EventSummaryItem[];
+  availableSeasons?: SeasonOption[];
+  seasonsByYear?: Record<string, SeasonSummaryResponse>;
+  lastUpdated?: string;
+  worldRanks?: { total: number; auto: number; teleop: number; endgame: number };
 }
 
 export interface EventMetadata {
@@ -130,6 +154,10 @@ export interface EventMetadata {
   status: EventStatus;
   liveStreamUrl: string | null;
   fieldCount?: number;
+  hasQualMatches?: boolean;
+  hasTeamMatches?: boolean;
+  season?: number;
+  seasonName?: string;
 }
 
 export interface EventStats {
@@ -142,9 +170,12 @@ export interface EventStats {
   winRate: number;
   matchesPlayed: number;
   opr: OprBreakdown;
+  oprRanks?: { total: number; auto: number; teleop: number; endgame: number };
   averages: PeriodAverages;
   highScore: number;
   highScoreMatch: string;
+  hasQualMatches?: boolean;
+  hasTeamMatches?: boolean;
 }
 
 export interface AllianceMember {
@@ -152,6 +183,51 @@ export interface AllianceMember {
   teamName: string;
   station: string;
   isTargetTeam: boolean;
+  onField?: boolean;
+  dq?: boolean;
+  noShow?: boolean;
+  yellowCard?: boolean;
+  redCard?: boolean;
+}
+
+export type MatchTeamMember = AllianceMember;
+
+export interface MatchTaskBreakdownSide {
+  robot1Auto: boolean;
+  robot2Auto: boolean;
+  autoLeavePoints: number;
+  autoArtifactPoints: number;
+  autoClassifiedArtifacts: number;
+  autoOverflowArtifacts: number;
+  autoPatternPoints: number;
+  autoTotal: number;
+  teleopArtifactPoints: number;
+  teleopClassifiedArtifacts: number;
+  teleopOverflowArtifacts: number;
+  teleopDepotPoints: number;
+  teleopDepotArtifacts: number;
+  teleopPatternPoints: number;
+  teleopTotal: number;
+  robot1Teleop: 'FULL' | 'PARTIAL' | 'NONE' | string;
+  robot2Teleop: 'FULL' | 'PARTIAL' | 'NONE' | string;
+  endgameBasePoints: number;
+  foulPointsAwarded: number;
+  foulPointsCommitted: number;
+  majorFouls: number;
+  minorFouls: number;
+  opponentMajorFouls?: number;
+  opponentMinorFouls?: number;
+  yellowCards?: number;
+  redCards?: number;
+  nonPenaltyTotal: number;
+  totalScore: number;
+}
+
+export type AllianceTaskBreakdown = MatchTaskBreakdownSide;
+
+export interface MatchTaskBreakdown {
+  red: MatchTaskBreakdownSide;
+  blue: MatchTaskBreakdownSide;
 }
 
 export interface MatchAllianceBreakdown {
@@ -190,7 +266,35 @@ export interface MatchItem {
   result: MatchResult;
   vodUrl: string | null;
   vodTimestampSeconds: number | null;
+  vodStartSeconds?: number | null;
+  vodEndSeconds?: number | null;
   periodBreakdown: MatchPeriodBreakdown | null;
+  taskBreakdown?: MatchTaskBreakdown | null;
+}
+
+export interface EventRankingItem {
+  rank: number;
+  teamNumber: number;
+  teamName: string;
+  wins: number;
+  losses: number;
+  ties: number;
+  matchesPlayed: number;
+  rp?: number | null;
+  tb1?: number | null;
+  tb2?: number | null;
+  avgScore?: number | null;
+  totalOpr?: number | null;
+  isTargetTeam?: boolean;
+}
+
+export interface EventTeamItem {
+  teamNumber: number;
+  teamName: string;
+  rank?: number | null;
+  record?: string | null;
+  totalOpr?: number | null;
+  isTargetTeam?: boolean;
 }
 
 export interface QueueAlert {
@@ -217,6 +321,8 @@ export interface EventDetailsResponse {
   event: EventMetadata;
   stats: EventStats;
   matches: MatchItem[];
+  rankings?: EventRankingItem[];
+  teams?: EventTeamItem[];
   activeAlert?: QueueAlert | null;
 }
 

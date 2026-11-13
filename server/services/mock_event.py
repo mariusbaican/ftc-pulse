@@ -16,12 +16,12 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 try:
-    from server.services.analytics import compute_event_opr
+    from server.services.analytics import compute_event_opr, _build_alliance_task_breakdown
 except ImportError:
     try:
-        from services.analytics import compute_event_opr
+        from services.analytics import compute_event_opr, _build_alliance_task_breakdown
     except ImportError:
-        from analytics import compute_event_opr
+        from analytics import compute_event_opr, _build_alliance_task_breakdown
 
 
 MOCK_TEAMS: Dict[int, str] = {
@@ -52,14 +52,16 @@ def build_mock_championship_event() -> Dict[str, Any]:
         }
     """
     event_code = "2025_mock_championship"
-    event_name = "FTC Pulse Live Invitational 2025"
-    type_name = "Live Championship Simulation"
+    event_name = "FTC Biobuzz Live Invitational"
+    type_name = "Live Biobuzz Invitational"
+    season = 2026
+    season_name = "BIOBUZZ"
     city = "Bucharest"
     state_prov = "B"
     country = "Romania"
     venue = "Sala Polivalentă București"
-    date_start = "2025-05-15T09:00:00"
-    date_end = "2025-05-17T18:00:00"
+    date_start = "2026-11-20T09:00:00"
+    date_end = "2026-11-22T18:00:00"
     status = "IN_PROGRESS"
     live_stream_url = "https://www.youtube.com/watch?v=H920hSVJw7E"
     field_count = 2
@@ -97,9 +99,9 @@ def build_mock_championship_event() -> Dict[str, Any]:
             "scheduledTime": "10:15",
             "actualStartTime": "10:18",
             "scoreRedFinal": 248,
-            "scoreBlueFinal": 195,
+            "scoreBlueFinal": 210,
             "scoreRedAuto": 82,
-            "scoreBlueAuto": 65,
+            "scoreBlueAuto": 70,
             "scoreRedFoul": 0,
             "scoreBlueFoul": 0,
             "teams": [
@@ -207,7 +209,7 @@ def build_mock_championship_event() -> Dict[str, Any]:
             "scheduledTime": "11:45",
             "actualStartTime": "11:48",
             "scoreRedFinal": 219,
-            "scoreBlueFinal": 235,
+            "scoreBlueFinal": 250,
             "scoreRedAuto": 74,
             "scoreBlueAuto": 80,
             "scoreRedFoul": 0,
@@ -407,7 +409,7 @@ def build_mock_championship_event() -> Dict[str, Any]:
             "matchNumber": 2,
             "alliances": [
                 {"alliance": "Red", "autoPoints": 82, "teleopPoints": 166, "teleopBasePoints": 35, "penaltyPointsCommitted": 0},
-                {"alliance": "Blue", "autoPoints": 65, "teleopPoints": 130, "teleopBasePoints": 30, "penaltyPointsCommitted": 0},
+                {"alliance": "Blue", "autoPoints": 70, "teleopPoints": 140, "teleopBasePoints": 35, "penaltyPointsCommitted": 0},
             ],
         },
         {
@@ -442,7 +444,7 @@ def build_mock_championship_event() -> Dict[str, Any]:
             "matchNumber": 7,
             "alliances": [
                 {"alliance": "Red", "autoPoints": 74, "teleopPoints": 145, "teleopBasePoints": 25, "penaltyPointsCommitted": 0},
-                {"alliance": "Blue", "autoPoints": 80, "teleopPoints": 155, "teleopBasePoints": 35, "penaltyPointsCommitted": 0},
+                {"alliance": "Blue", "autoPoints": 80, "teleopPoints": 170, "teleopBasePoints": 35, "penaltyPointsCommitted": 0},
             ],
         },
         {
@@ -473,6 +475,13 @@ def build_mock_championship_event() -> Dict[str, Any]:
                 {"alliance": "Blue", "autoPoints": 76, "teleopPoints": 152, "teleopBasePoints": 35, "penaltyPointsCommitted": 0},
             ],
         },
+    ]
+
+    # Filter out practice matches if any
+    all_raw_matches = [
+        m for m in all_raw_matches
+        if "PRACTICE" not in str(m.get("tournamentLevel", "")).upper()
+        and "PRACTICE" not in str(m.get("description", "")).upper()
     ]
 
     # Compute real OPR across the tournament
@@ -535,9 +544,13 @@ def build_mock_championship_event() -> Dict[str, Any]:
         else:
             res = "PENDING"
 
-        # Build period breakdown if score breakdowns exist
+        field_name = m.get("field") or f"Field {(match_num % field_count) + 1}"
+        scheduled_time = m.get("actualStartTime") or m.get("scheduledTime")
+        vod_ts = int(m.get("vodTimestampSeconds", 300 + idx * 420)) if live_stream_url else None
+
         red_bd = scores_by_match.get(match_num, {}).get("Red")
         blue_bd = scores_by_match.get(match_num, {}).get("Blue")
+
         if red_bd and blue_bd:
             r_auto = int(red_bd["autoPoints"])
             r_end = int(red_bd["teleopBasePoints"])
@@ -555,11 +568,63 @@ def build_mock_championship_event() -> Dict[str, Any]:
                 "red": {"auto": r_auto, "teleop": r_tele, "endgame": r_end, "foulCommitted": r_foul, "total": r_tot},
                 "blue": {"auto": b_auto, "teleop": b_tele, "endgame": b_end, "foulCommitted": b_foul, "total": b_tot},
             }
+            red_tasks = _build_alliance_task_breakdown(red_bd, r_auto, r_tele, r_end, b_foul, r_foul, r_tot, opp_bd=blue_bd, alliance_teams=red_teams)
+            blue_tasks = _build_alliance_task_breakdown(blue_bd, b_auto, b_tele, b_end, r_foul, b_foul, b_tot, opp_bd=red_bd, alliance_teams=blue_teams)
+            task_breakdown = {"red": red_tasks, "blue": blue_tasks}
+        elif score_red is not None and score_blue is not None:
+            r_auto = int(m.get("scoreRedAuto", 0) or 0)
+            r_foul = int(m.get("scoreRedFoul", 0) or 0)
+            b_foul = int(m.get("scoreBlueFoul", 0) or 0)
+            r_tot = int(score_red)
+            r_non_foul = max(0, r_tot - b_foul)
+            r_tele = max(0, r_non_foul - r_auto)
+            r_end = 0
+
+            b_auto = int(m.get("scoreBlueAuto", 0) or 0)
+            b_tot = int(score_blue)
+            b_non_foul = max(0, b_tot - r_foul)
+            b_tele = max(0, b_non_foul - b_auto)
+            b_end = 0
+
+            period_breakdown = {
+                "red": {"auto": r_auto, "teleop": r_tele, "endgame": 0, "foulCommitted": r_foul, "total": r_tot},
+                "blue": {"auto": b_auto, "teleop": b_tele, "endgame": 0, "foulCommitted": b_foul, "total": b_tot},
+            }
+            red_tasks = _build_alliance_task_breakdown(None, r_auto, r_tele, r_end, b_foul, r_foul, r_tot, opp_bd=None, alliance_teams=red_teams)
+            blue_tasks = _build_alliance_task_breakdown(None, b_auto, b_tele, b_end, r_foul, b_foul, b_tot, opp_bd=None, alliance_teams=blue_teams)
+            task_breakdown = {"red": red_tasks, "blue": blue_tasks}
         else:
             period_breakdown = None
+            task_breakdown = None
 
-        field_name = m.get("field") or f"Field {(match_num % field_count) + 1}"
-        scheduled_time = m.get("actualStartTime") or m.get("scheduledTime")
+        red_alliance_teams = [
+            {
+                "teamNumber": t["teamNumber"],
+                "teamName": MOCK_TEAMS.get(t["teamNumber"], f"Team {t['teamNumber']}"),
+                "station": t.get("station", "Red"),
+                "isTargetTeam": t["teamNumber"] == 15996,
+                "onField": bool(t.get("onField", True)),
+                "dq": bool(t.get("dq", False)),
+                "noShow": bool(t.get("noShow", False)) or (t.get("onField") is False),
+                "yellowCard": bool(t.get("yellowCard", False)),
+                "redCard": bool(t.get("redCard", False)),
+            }
+            for t in red_teams
+        ]
+        blue_alliance_teams = [
+            {
+                "teamNumber": t["teamNumber"],
+                "teamName": MOCK_TEAMS.get(t["teamNumber"], f"Team {t['teamNumber']}"),
+                "station": t.get("station", "Blue"),
+                "isTargetTeam": t["teamNumber"] == 15996,
+                "onField": bool(t.get("onField", True)),
+                "dq": bool(t.get("dq", False)),
+                "noShow": bool(t.get("noShow", False)) or (t.get("onField") is False),
+                "yellowCard": bool(t.get("yellowCard", False)),
+                "redCard": bool(t.get("redCard", False)),
+            }
+            for t in blue_teams
+        ]
 
         norm_m = {
             "matchId": f"{event_code}_{level}_{match_num}_{series}",
@@ -571,24 +636,10 @@ def build_mock_championship_event() -> Dict[str, Any]:
             "field": field_name,
             "scheduledTime": scheduled_time,
             "actualStartTime": m.get("actualStartTime"),
-            "redAlliance": [
-                {
-                    "teamNumber": t["teamNumber"],
-                    "teamName": MOCK_TEAMS.get(t["teamNumber"], f"Team {t['teamNumber']}"),
-                    "station": t.get("station", "Red"),
-                    "isTargetTeam": t["teamNumber"] == 15996,
-                }
-                for t in red_teams
-            ],
-            "blueAlliance": [
-                {
-                    "teamNumber": t["teamNumber"],
-                    "teamName": MOCK_TEAMS.get(t["teamNumber"], f"Team {t['teamNumber']}"),
-                    "station": t.get("station", "Blue"),
-                    "isTargetTeam": t["teamNumber"] == 15996,
-                }
-                for t in blue_teams
-            ],
+            "redAlliance": red_alliance_teams,
+            "blueAlliance": blue_alliance_teams,
+            "redTeams": red_alliance_teams,
+            "blueTeams": blue_alliance_teams,
             "scoreRedFinal": score_red,
             "scoreBlueFinal": score_blue,
             "scoreRedAuto": m.get("scoreRedAuto"),
@@ -596,10 +647,39 @@ def build_mock_championship_event() -> Dict[str, Any]:
             "targetTeamAlliance": target_alliance,
             "result": res,
             "vodUrl": live_stream_url,
-            "vodTimestampSeconds": int(m.get("vodTimestampSeconds", 300 + idx * 420)),
+            "vodTimestampSeconds": vod_ts,
+            "vodStartSeconds": vod_ts,
+            "vodEndSeconds": (vod_ts + 165) if vod_ts is not None else None,
             "periodBreakdown": period_breakdown,
+            "taskBreakdown": task_breakdown,
         }
         normalized_matches.append(norm_m)
+
+    # Sort Playoffs Before Qualifications:
+    playoff_matches = [
+        m for m in normalized_matches
+        if "QUAL" not in str(m.get("tournamentLevel", "")).upper()
+    ]
+    playoff_matches.sort(
+        key=lambda m: (
+            int(m.get("series") or 0),
+            int(m.get("matchNumber") or 0),
+            str(m.get("actualStartTime") or ""),
+        )
+    )
+
+    qual_matches = [
+        m for m in normalized_matches
+        if "QUAL" in str(m.get("tournamentLevel", "")).upper()
+    ]
+    qual_matches.sort(
+        key=lambda m: (
+            int(m.get("matchNumber") or 0),
+            int(m.get("series") or 0),
+        )
+    )
+
+    normalized_matches = playoff_matches + qual_matches
 
     # BrickBot completed match stats (Matches 2, 5, 7, 10)
     # Match 2 (Red): 248 (auto 82, tele 131, end 35) -> Win
@@ -622,11 +702,134 @@ def build_mock_championship_event() -> Dict[str, Any]:
     high_score = 282
     high_score_match = "Qualification 10"
 
+    score_margins = []
+    for m in normalized_matches:
+        if m.get("result") in ("WIN", "LOSS", "TIE"):
+            s_red = float(m.get("scoreRedFinal") or 0)
+            s_blue = float(m.get("scoreBlueFinal") or 0)
+            al = str(m.get("targetTeamAlliance", "")).capitalize()
+            if al == "Red":
+                score_margins.append(s_red - s_blue)
+            elif al == "Blue":
+                score_margins.append(s_blue - s_red)
+    avg_score_margin = round(sum(score_margins) / len(score_margins), 1) if score_margins else 0.0
+
+    penalties_awarded = []
+    penalties_conceded = []
+    for m in normalized_matches:
+        if m.get("result") in ("WIN", "LOSS", "TIE"):
+            target_side = str(m.get("targetTeamAlliance", "red")).lower()
+            tb = m.get("taskBreakdown") or {}
+            target_tb = tb.get(target_side) or {}
+            awarded = target_tb.get("foulPointsAwarded")
+            conceded = target_tb.get("foulPointsCommitted")
+            if awarded is None:
+                opp_side = "blue" if target_side == "red" else "red"
+                awarded = (m.get("periodBreakdown") or {}).get(opp_side, {}).get("foulCommitted", 0)
+            if conceded is None:
+                conceded = (m.get("periodBreakdown") or {}).get(target_side, {}).get("foulCommitted", 0)
+            penalties_awarded.append(float(awarded or 0))
+            penalties_conceded.append(float(conceded or 0))
+
+    avg_penalties_awarded = round(sum(penalties_awarded) / len(penalties_awarded), 1) if penalties_awarded else 0.0
+    avg_penalties_conceded = round(sum(penalties_conceded) / len(penalties_conceded), 1) if penalties_conceded else 0.0
+    avg_net_penalties = round(avg_penalties_awarded - avg_penalties_conceded, 1)
+
+    # Compute average qualification match scores across mock event
+    mock_team_scores: Dict[int, List[float]] = {}
+    for m in all_raw_matches:
+        if m.get("scoreRedFinal") is not None and m.get("scoreBlueFinal") is not None:
+            s_red = float(m["scoreRedFinal"])
+            s_blue = float(m["scoreBlueFinal"])
+            for t in m.get("teams", []):
+                t_num = t["teamNumber"]
+                if "Red" in str(t.get("station", "")):
+                    mock_team_scores.setdefault(t_num, []).append(s_red)
+                elif "Blue" in str(t.get("station", "")):
+                    mock_team_scores.setdefault(t_num, []).append(s_blue)
+
+    mock_team_avg_scores = {
+        t_num: round(sum(scs) / len(scs), 1)
+        for t_num, scs in mock_team_scores.items()
+        if scs
+    }
+
+    # Build mock rankings table for all 12 teams
+    mock_rankings = [
+        {
+            "rank": 2,
+            "teamNumber": 15996,
+            "teamName": "BrickBot",
+            "wins": wins,
+            "losses": losses,
+            "ties": ties,
+            "matchesPlayed": matches_played,
+            "rp": round((wins * 2.0 + ties) / max(1, matches_played), 2),
+            "tb1": round(brickbot_opr.get("autoOpr", 43.0) * 2.0, 1),
+            "tb2": round(brickbot_opr.get("endgameOpr", 20.0) * 1.5, 1),
+            "avgScore": mock_team_avg_scores.get(15996, total_avg),
+            "totalOpr": brickbot_opr["totalOpr"],
+            "isTargetTeam": True,
+        }
+    ]
+    other_mock_teams = [t for t in MOCK_TEAMS.keys() if t != 15996]
+    for i, t_num in enumerate(other_mock_teams):
+        r_num = 1 if i == 0 else (i + 2)
+        w = 4 if i == 0 else max(0, 4 - ((i + 1) // 3))
+        l = max(0, 4 - w)
+        t_mp = w + l
+        t_opr_dict = event_oprs.get(t_num, {})
+        t_total_opr = t_opr_dict.get("totalOpr", 80.0)
+        t_auto_opr = t_opr_dict.get("autoOpr", 25.0)
+        t_end_opr = t_opr_dict.get("endgameOpr", 15.0)
+        t_avg_score = mock_team_avg_scores.get(t_num, round(t_total_opr * 1.85, 1))
+
+        mock_rankings.append({
+            "rank": r_num,
+            "teamNumber": t_num,
+            "teamName": MOCK_TEAMS[t_num],
+            "wins": w,
+            "losses": l,
+            "ties": 0,
+            "matchesPlayed": t_mp,
+            "rp": round(w * 2.0 / max(1, t_mp), 2),
+            "tb1": round(t_auto_opr * 2.0, 1),
+            "tb2": round(t_end_opr * 1.5, 1),
+            "avgScore": t_avg_score,
+            "totalOpr": t_total_opr,
+            "isTargetTeam": False,
+        })
+    mock_rankings.sort(key=lambda x: x["rank"])
+    rank_by_team = {rk["teamNumber"]: rk for rk in mock_rankings}
+
+    # Build teams table sorted ascending by teamNumber
+    mock_teams = []
+    for t_num in sorted(MOCK_TEAMS.keys()):
+        rk = rank_by_team.get(t_num)
+        if rk:
+            mock_teams.append({
+                "teamNumber": t_num,
+                "teamName": MOCK_TEAMS[t_num],
+                "rank": rk["rank"],
+                "record": f"{rk['wins']}-{rk['losses']}-{rk['ties']}",
+                "totalOpr": rk["totalOpr"],
+                "isTargetTeam": t_num == 15996,
+            })
+
+    opr_ranks = {
+        "total": 1 + sum(1 for t, o in event_oprs.items() if o.get("totalOpr", 0.0) > brickbot_opr.get("totalOpr", 0.0)),
+        "auto": 1 + sum(1 for t, o in event_oprs.items() if o.get("autoOpr", 0.0) > brickbot_opr.get("autoOpr", 0.0)),
+        "teleop": 1 + sum(1 for t, o in event_oprs.items() if o.get("teleopOpr", 0.0) > brickbot_opr.get("teleopOpr", 0.0)),
+        "endgame": 1 + sum(1 for t, o in event_oprs.items() if o.get("endgameOpr", 0.0) > brickbot_opr.get("endgameOpr", 0.0)),
+    }
+
     event_detail = {
         "event": {
             "code": event_code,
             "name": event_name,
             "typeName": type_name,
+            "season": season,
+            "seasonName": season_name,
             "city": city,
             "stateprov": state_prov,
             "country": country,
@@ -636,6 +839,8 @@ def build_mock_championship_event() -> Dict[str, Any]:
             "status": status,
             "liveStreamUrl": live_stream_url,
             "fieldCount": field_count,
+            "hasQualMatches": True,
+            "hasTeamMatches": True,
         },
         "stats": {
             "teamNumber": 15996,
@@ -647,22 +852,34 @@ def build_mock_championship_event() -> Dict[str, Any]:
             "winRate": win_rate,
             "matchesPlayed": matches_played,
             "opr": brickbot_opr,
+            "oprRanks": opr_ranks,
             "averages": {
                 "autoAvg": auto_avg,
                 "teleopAvg": teleop_avg,
                 "endgameAvg": endgame_avg,
                 "totalAvg": total_avg,
+                "avgScoreMargin": avg_score_margin,
+                "avgWinningMargin": avg_score_margin,
+                "avgPenaltiesAwarded": avg_penalties_awarded,
+                "avgPenaltiesConceded": avg_penalties_conceded,
+                "avgNetPenalties": avg_net_penalties,
             },
             "highScore": high_score,
             "highScoreMatch": high_score_match,
+            "hasQualMatches": True,
+            "hasTeamMatches": True,
         },
         "matches": normalized_matches,
+        "rankings": mock_rankings,
+        "teams": mock_teams,
     }
 
     event_summary = {
         "eventCode": event_code,
         "name": event_name,
         "typeName": type_name,
+        "season": season,
+        "seasonName": season_name,
         "city": city,
         "stateprov": state_prov,
         "country": country,
@@ -684,6 +901,8 @@ def build_mock_championship_event() -> Dict[str, Any]:
         "endgameOpr": brickbot_opr["endgameOpr"],
         "matchesPlayed": matches_played,
         "highScore": high_score,
+        "hasQualMatches": True,
+        "hasTeamMatches": True,
     }
 
     return {
@@ -726,7 +945,7 @@ class QueueAlertManager:
                 "teamNumber": 15996,
                 "teamName": "BrickBot",
                 "eventCode": "2025_mock_championship",
-                "eventName": "FTC Pulse Live Invitational 2025",
+                "eventName": "FTC Biobuzz Live Invitational",
                 "matchNumber": match_number,
                 "field": field,
                 "alliance": alliance,

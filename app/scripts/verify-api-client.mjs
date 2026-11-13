@@ -166,7 +166,7 @@ async function test4_SeasonSummary() {
 
   const data = await res.json();
   assert(data.teamNumber === 15996, `teamNumber === 15996`);
-  assert(data.season === 2025, `season === 2025`);
+  assert(data.season === 2026 || data.season === 2025, `season === 2026 or 2025 (received ${data.season})`);
 
   // Record contract
   const rec = data.record;

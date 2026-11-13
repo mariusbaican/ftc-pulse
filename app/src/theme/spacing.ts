@@ -1,5 +1,6 @@
 /**
- * 4pt/8pt Grid Spacing and Border Radius Tokens for FTC Pulse.
+ * 4pt/8pt Grid Spacing and Tactical Border Radius Tokens for FTC Pulse.
+ * Designed for a sharp, tactical robotics aesthetic with small corner radiuses.
  */
 
 export const spacing = {
@@ -15,11 +16,12 @@ export const spacing = {
 export type SpacingKey = keyof typeof spacing;
 
 export const radius = {
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 20,
-  full: 9999,
+  xs: 2,
+  sm: 4,
+  md: 6,
+  lg: 6,
+  xl: 8,
+  full: 4, // sharp tactical tags instead of round pills
 } as const;
 
 export type RadiusKey = keyof typeof radius;

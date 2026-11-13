@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import {
   Pressable,
   StyleProp,
@@ -7,181 +7,141 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import Animated, {
-  Easing,
-  FadeInDown,
-  SharedValue,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withTiming,
-} from 'react-native-reanimated';
 
 import { useAppTheme } from '@/theme';
-import { AppIcon, AppIconName } from '@/components/ui/icon';
+import { AppIcon } from '@/components/ui/icon';
 import { StatusBadge } from '@/components/ui/status-badge';
 import type { EventMetadata, EventStats, MatchItem } from '@/types/api';
 
 export interface EventStatsTabProps {
   event: EventMetadata;
   stats: EventStats;
-  matches: MatchItem[];
+  matches?: MatchItem[];
   onSelectMatchForVod?: (match: MatchItem) => void;
+  onSelectHighScoreMatch?: (highScoreMatchDesc?: string) => void;
+  onNavigateToRankings?: () => void;
   style?: StyleProp<ViewStyle>;
 }
 
-interface PeriodBreakdownConfig {
-  id: 'auto' | 'teleop' | 'endgame';
-  title: string;
-  subtitle: string;
-  icon: AppIconName;
-  accentColor: string;
-  softColor: string;
-  oprValue: number;
-  avgValue: number;
-}
-
-function formatMatchLabel(match: MatchItem): string {
-  if (match.description) {
-    if (/^qualification\s*/i.test(match.description)) {
-      return match.description.replace(/^qualification\s*/i, 'QM-');
-    }
-    if (/^semifinal\s*/i.test(match.description)) {
-      return match.description.replace(/^semifinal\s*/i, 'SF-');
-    }
-    if (/^final\s*/i.test(match.description)) {
-      return match.description.replace(/^final\s*/i, 'F-');
-    }
-    return match.description;
+function formatOrdinal(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) {
+    return `${n}th`;
   }
-  if (match.matchNumber) {
-    return `QM-${match.matchNumber}`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
   }
-  return 'Match';
 }
 
 /**
  * Modular Event Statistics & Performance Telemetry Tab.
  *
  * Implements:
- * 1. 4-Tile Tournament KPI Grid (2x2 with tabular-nums):
- *    - Tournament Rank (#rank of totalTeams, gold trophy highlight if <= 4)
- *    - Event Record (W-L-T with success win rate badge)
- *    - Total Event OPR (Ridge OLS Offensive Rating in primary color)
- *    - Event High Score (Peak match score & match description)
- * 2. 2025 DECODE Period Breakdown Card:
- *    - Autonomous, Driver-Controlled TeleOp, and Endgame telemetry
- *    - Dual proportional horizontal progress bars (Individual OPR vs Alliance Match Avg)
- *    - Summary footer comparing totals and showing BrickBot offensive share %
- * 3. Match Score Progression & Performance Trajectory Card:
- *    - Chronological list of completed matches
- *    - Horizontal score bars colored by result (Emerald WIN, Red LOSS, Gold TIE)
- *    - Match labels, alliance color pills, final scores (e.g. 248 - 195)
- *    - Accessible 44pt VOD button triggering onSelectMatchForVod
+ * 1. 3 Full-Width Horizontal KPI Cards (Tournament Rank, Event Record, Event High Score NP)
+ * 2. Stage/Participation Empty States:
+ *    - If no team matches played: displays "Team #15996 did not play any matches at this event."
+ *    - If playoff / non-qualification stage: displays stage notice
+ * 3. OPR Breakdown & Ranks Card:
+ *    - Total Event OPR + EVENT RANK: 1ST badge
+ *    - Auto OPR, TeleOp OPR, Endgame OPR + individual event ranks
+ * 4. Average Scores Card:
+ *    - Average Score + Average Score Margin
+ *    - Avg Autonomous, Avg TeleOp, Avg Endgame
  */
 export function EventStatsTab({
   event,
   stats,
   matches,
-  onSelectMatchForVod,
+  onSelectHighScoreMatch,
+  onNavigateToRankings,
   style,
 }: EventStatsTabProps) {
   const { colors, typography, spacing, radius, shadows } = useAppTheme();
-  const reducedMotion = useReducedMotion();
-
-  // Shared animated value for telemetry progress bars
-  const progressAnimation = useSharedValue(reducedMotion ? 1 : 0);
-
-  useEffect(() => {
-    if (!reducedMotion) {
-      progressAnimation.value = withTiming(1, {
-        duration: 750,
-        easing: Easing.out(Easing.cubic),
-      });
-    } else {
-      progressAnimation.value = 1;
-    }
-  }, [reducedMotion, progressAnimation]);
 
   // Normalize win rate percentage (handles both 0..1 and 0..100)
   const rawWinRate = stats?.winRate ?? 0;
   const normalizedWinRate =
     rawWinRate > 0 && rawWinRate <= 1 ? rawWinRate * 100 : rawWinRate;
+  const isBelowFifty = normalizedWinRate < 50;
 
-  // Total scaling reference for period dual bars
-  const maxScale = Math.max(
-    stats?.averages?.totalAvg ?? 0,
-    stats?.opr?.totalOpr ?? 0,
-    100
-  );
+  // Check if team played any matches at this event
+  const hasTeamMatches =
+    stats?.hasTeamMatches !== false &&
+    (stats?.matchesPlayed ?? 0) > 0;
 
-  // BrickBot offensive share percentage
-  const totalOpr = stats?.opr?.totalOpr ?? 0;
-  const totalAvg = stats?.averages?.totalAvg ?? 0;
-  const offensiveSharePct = Math.min(
-    100,
-    Math.round((totalOpr / Math.max(1, totalAvg)) * 100)
-  );
+  // Check if stage has qualification matches
+  const hasQualMatches =
+    stats?.hasQualMatches !== false && event?.hasQualMatches !== false;
 
-  // Period configs for DECODE breakdown
-  const periods: PeriodBreakdownConfig[] = [
-    {
-      id: 'auto',
-      title: 'Autonomous Period',
-      subtitle: '30s Pre-Programmed & Vision Scoring',
-      icon: 'bolt',
-      accentColor: colors.allianceBlue,
-      softColor: colors.allianceBlueSoft,
-      oprValue: stats?.opr?.autoOpr ?? 0,
-      avgValue: stats?.averages?.autoAvg ?? 0,
-    },
-    {
-      id: 'teleop',
-      title: 'Driver-Controlled TeleOp',
-      subtitle: '2m Driver Telemetry & Cycle Scoring',
-      icon: 'radio',
-      accentColor: colors.accentGold,
-      softColor: colors.accentGoldSoft,
-      oprValue: stats?.opr?.teleopOpr ?? 0,
-      avgValue: stats?.averages?.teleopAvg ?? 0,
-    },
-    {
-      id: 'endgame',
-      title: 'Endgame',
-      subtitle: '30s Ascent / Parking & High-Value Objectives',
-      icon: 'trophy',
-      accentColor: colors.primary,
-      softColor: colors.primarySoft,
-      oprValue: stats?.opr?.endgameOpr ?? 0,
-      avgValue: stats?.averages?.endgameAvg ?? 0,
-    },
-  ];
+  const targetTeamNumber = stats?.teamNumber || 15996;
 
-  // Filter completed matches and sort chronologically by match number
-  const completedMatches = (matches || [])
-    .filter(
+  const totalEventRank = formatOrdinal(stats?.oprRanks?.total ?? stats?.rank ?? 1);
+  const autoEventRank = formatOrdinal(stats?.oprRanks?.auto ?? 1);
+  const teleopEventRank = formatOrdinal(stats?.oprRanks?.teleop ?? 1);
+  const endgameEventRank = formatOrdinal(stats?.oprRanks?.endgame ?? 1);
+
+  const avgScoreMargin =
+    (stats?.averages as any)?.avgScoreMargin ?? stats?.averages?.avgWinningMargin ?? 0;
+
+  // Penalty Telemetry (Item 12):
+  // Read avgPenaltiesAwarded, avgPenaltiesConceded, and avgNetPenalties from stats?.averages
+  const rawAvgAwarded = stats?.averages?.avgPenaltiesAwarded;
+  const rawAvgConceded = stats?.averages?.avgPenaltiesConceded;
+  const rawNetPenalties = stats?.averages?.avgNetPenalties;
+
+  let avgAwarded = rawAvgAwarded;
+  let avgConceded = rawAvgConceded;
+  let netPenalties = rawNetPenalties;
+
+  if (avgAwarded == null || avgConceded == null || netPenalties == null) {
+    const teamMatches = (matches ?? []).filter(
       (m) =>
-        m.status === 'COMPLETED' ||
-        m.result === 'WIN' ||
-        m.result === 'LOSS' ||
-        m.result === 'TIE'
-    )
-    .sort((a, b) => (a.matchNumber || 0) - (b.matchNumber || 0));
+        m.status === 'COMPLETED' &&
+        m.targetTeamAlliance &&
+        (m.scoreRedFinal !== null || m.scoreBlueFinal !== null)
+    );
+    if (teamMatches.length > 0) {
+      let totalAwarded = 0;
+      let totalConceded = 0;
+      let count = 0;
+      for (const m of teamMatches) {
+        const side = (m.targetTeamAlliance?.toLowerCase() === 'blue' ? 'blue' : 'red') as 'red' | 'blue';
+        const oppSide = side === 'red' ? 'blue' : 'red';
+        const sideTasks = m.taskBreakdown?.[side];
+        const oppTasks = m.taskBreakdown?.[oppSide];
+        if (sideTasks) {
+          totalAwarded += sideTasks.foulPointsAwarded ?? (oppTasks?.foulPointsCommitted ?? 0);
+          totalConceded += sideTasks.foulPointsCommitted ?? 0;
+          count++;
+        } else if (m.periodBreakdown) {
+          totalConceded += m.periodBreakdown[side]?.foulCommitted ?? 0;
+          totalAwarded += m.periodBreakdown[oppSide]?.foulCommitted ?? 0;
+          count++;
+        }
+      }
+      if (count > 0) {
+        if (avgAwarded == null) avgAwarded = totalAwarded / count;
+        if (avgConceded == null) avgConceded = totalConceded / count;
+        if (netPenalties == null) netPenalties = avgAwarded - avgConceded;
+      }
+    }
+  }
 
-  // Max score across completed matches for progression bar scaling
-  const maxMatchScore = Math.max(
-    ...completedMatches.map((m) =>
-      Math.max(m.scoreRedFinal ?? 0, m.scoreBlueFinal ?? 0)
-    ),
-    150
-  );
-
-  const isTopRank = stats?.rank != null && stats.rank <= 4;
+  const finalAvgAwarded = avgAwarded ?? 0;
+  const finalAvgConceded = avgConceded ?? 0;
+  const finalNetPenalties = netPenalties ?? (finalAvgAwarded - finalAvgConceded);
 
   return (
-    <View style={[styles.container, { gap: spacing.lg }, style]}>
+    <View style={[styles.container, { gap: spacing.md }, style]}>
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 1: 4-Tile Tournament KPI Grid (2x2 with tabular-nums)
+          SECTION 1: 3 Full-Width Horizontal KPI Cards or Notice
          ───────────────────────────────────────────────────────────── */}
       <View style={styles.sectionBlock}>
         <Text
@@ -193,828 +153,572 @@ export function EventStatsTab({
           Tournament Performance
         </Text>
 
-        <View style={[styles.kpiGrid, { gap: spacing.sm }]}>
-          {/* Row 1: Rank & Record */}
-          <View style={[styles.kpiRow, { gap: spacing.sm }]}>
-            {/* Tile 1: Tournament Rank */}
-            <Animated.View
-              entering={reducedMotion ? undefined : FadeInDown.duration(260).delay(50)}
+        {!hasTeamMatches ? (
+          /* Condition 1: Team did not play any matches */
+          <View
+            style={[
+              styles.noticeCard,
+              shadows.sm,
+              {
+                backgroundColor: colors.surface,
+                borderRadius: radius.md,
+                padding: spacing.xl,
+              },
+            ]}
+          >
+            <View
               style={[
-                styles.kpiTile,
-                shadows.sm,
+                styles.noticeIconCircle,
+                { backgroundColor: colors.neutralSoft },
+              ]}
+            >
+              <AppIcon name="alert-circle" size={24} color={colors.textSecondary} />
+            </View>
+            <Text
+              style={[
+                typography.subhead,
                 {
-                  backgroundColor: colors.card,
-                  borderColor: isTopRank ? colors.accentGold : colors.border,
-                  borderWidth: isTopRank ? 1.5 : 1,
-                  borderRadius: radius.md,
-                  padding: spacing.base,
+                  color: colors.textPrimary,
+                  marginTop: spacing.md,
+                  textAlign: 'center',
+                  fontWeight: '700',
                 },
               ]}
-              accessible
-              accessibilityRole="summary"
-              accessibilityLabel={`Tournament Rank: ${stats?.rank ? `#${stats.rank}` : 'Unranked'} of ${stats?.totalTeams ?? 0} Teams`}
             >
-              <View style={styles.tileHeaderRow}>
-                <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                  TOURNAMENT RANK
-                </Text>
-                {isTopRank ? (
+              Team #{targetTeamNumber} did not play any matches at this event.
+            </Text>
+          </View>
+        ) : !hasQualMatches ? (
+          /* Condition 2: Playoff / Non-qualification stage */
+          <View
+            style={[
+              styles.noticeCard,
+              shadows.sm,
+              {
+                backgroundColor: colors.surface,
+                borderRadius: radius.md,
+                padding: spacing.xl,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.noticeIconCircle,
+                { backgroundColor: colors.accentGoldSoft },
+              ]}
+            >
+              <AppIcon name="trophy" size={24} color={colors.accentGold} />
+            </View>
+            <Text
+              style={[
+                typography.subhead,
+                {
+                  color: colors.textPrimary,
+                  marginTop: spacing.md,
+                  textAlign: 'center',
+                  fontWeight: '700',
+                  lineHeight: 22,
+                },
+              ]}
+            >
+              Playoff / Division Finals Stage — Qualification OPR, Rank, and W-L-T Record are not calculated for non-qualification stages.
+            </Text>
+          </View>
+        ) : (
+          /* Default: 3 Full-Width Horizontal Cards (Stacked Vertically) */
+          <View style={[styles.horizontalCardsStack, { gap: spacing.sm }]}>
+            {/* Card 1: Tournament Rank Horizontal Card (Interactive Pressable -> Rankings Tab) */}
+            <Pressable
+              onPress={onNavigateToRankings}
+              disabled={!onNavigateToRankings}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={`Tournament Rank: ${stats?.rank ? `#${stats.rank}` : 'Unranked'} of ${stats?.totalTeams ?? 0} Teams. Tap to view rankings.`}
+              accessibilityHint="Navigates to Rankings tab"
+              style={({ pressed }) => [
+                styles.horizontalKpiCard,
+                shadows.sm,
+                {
+                  backgroundColor: colors.surface,
+                  borderRadius: radius.md,
+                  padding: spacing.base,
+                  opacity: pressed ? 0.85 : 1,
+                },
+              ]}
+            >
+              <View style={styles.cardHeaderBetween}>
+                <View style={styles.headerTitleGroup}>
                   <View
                     style={[
-                      styles.iconCircle,
-                      { backgroundColor: colors.accentGoldSoft },
+                      styles.iconBadgeSmall,
+                      {
+                        backgroundColor: colors.surfaceElevated,
+                        borderRadius: radius.sm,
+                      },
                     ]}
                   >
-                    <AppIcon name="trophy" size={14} color={colors.accentGold} />
+                    <AppIcon name="chart" size={14} color={colors.primary} />
                   </View>
-                ) : (
-                  <View
+                  <Text
                     style={[
-                      styles.iconCircle,
-                      { backgroundColor: colors.neutralSoft },
+                      typography.caption,
+                      styles.cardHeaderLabel,
+                      { color: colors.textSecondary },
                     ]}
                   >
-                    <AppIcon name="chart" size={14} color={colors.textSecondary} />
-                  </View>
-                )}
+                    TOURNAMENT RANK
+                  </Text>
+                </View>
+
+                <AppIcon name="arrow-up-right" size={14} color={colors.primary} />
               </View>
 
+              <View style={[styles.contentRowBetween, { marginTop: spacing.sm }]}>
+                <Text
+                  style={[
+                    styles.tabularHeroValue,
+                    { color: colors.textPrimary },
+                  ]}
+                >
+                  {stats?.rank ? `#${stats.rank}` : 'Unranked'}
+                </Text>
+
+                <Text
+                  style={[
+                    typography.subhead,
+                    styles.sideMetricLabel,
+                    { color: colors.textMuted },
+                  ]}
+                  numberOfLines={1}
+                >
+                  of {stats?.totalTeams ?? 0} Teams
+                </Text>
+              </View>
+            </Pressable>
+
+            {/* Card 2: Event Record Horizontal Card (Interactive Pressable -> Rankings Tab) */}
+            <Pressable
+              onPress={onNavigateToRankings}
+              disabled={!onNavigateToRankings}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={`Event Record: ${stats?.wins ?? 0} wins, ${stats?.losses ?? 0} losses, ${stats?.ties ?? 0} ties, ${normalizedWinRate.toFixed(1)} percent win rate, ${stats?.matchesPlayed ?? 0} matches played. Tap to view rankings.`}
+              accessibilityHint="Navigates to Rankings tab"
+              style={({ pressed }) => [
+                styles.horizontalKpiCard,
+                shadows.sm,
+                {
+                  backgroundColor: colors.surface,
+                  borderRadius: radius.md,
+                  padding: spacing.base,
+                  opacity: pressed ? 0.85 : 1,
+                },
+              ]}
+            >
+              <View style={styles.cardHeaderBetween}>
+                <View style={styles.headerTitleGroup}>
+                  <View
+                    style={[
+                      styles.iconBadgeSmall,
+                      {
+                        backgroundColor: colors.surfaceElevated,
+                        borderRadius: radius.sm,
+                      },
+                    ]}
+                  >
+                    <AppIcon name="shield" size={14} color={colors.primary} />
+                  </View>
+                  <Text
+                    style={[
+                      typography.caption,
+                      styles.cardHeaderLabel,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    EVENT RECORD
+                  </Text>
+                </View>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <StatusBadge
+                    variant={isBelowFifty ? 'red' : 'live'}
+                    label={`${normalizedWinRate.toFixed(1)}% Win Rate`}
+                    size="sm"
+                  />
+                  <AppIcon name="arrow-up-right" size={14} color={colors.primary} />
+                </View>
+              </View>
+
+              <View style={[styles.contentRowBetween, { marginTop: spacing.sm }]}>
+                <Text
+                  style={[
+                    styles.tabularHeroValue,
+                    { color: colors.textPrimary },
+                  ]}
+                >
+                  {stats?.wins ?? 0}-{stats?.losses ?? 0}-{stats?.ties ?? 0}
+                </Text>
+
+                <Text
+                  style={[
+                    typography.subhead,
+                    styles.sideMetricLabel,
+                    { color: colors.textMuted },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {stats?.matchesPlayed ?? 0} Matches Played
+                </Text>
+              </View>
+            </Pressable>
+
+            {/* Card 3: Event High Score (NP) Horizontal Card (Interactive Pressable) */}
+            <Pressable
+              onPress={() => onSelectHighScoreMatch?.(stats?.highScoreMatch)}
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={`Event High Score (NP): ${stats?.highScore ?? 0} pts, ${stats?.highScoreMatch || 'Peak Alliance Score'}. Tap to jump to match.`}
+              accessibilityHint="Jumps to match in the matches tab"
+              style={({ pressed }) => [
+                styles.horizontalKpiCard,
+                shadows.sm,
+                {
+                  backgroundColor: colors.surface,
+                  borderRadius: radius.md,
+                  padding: spacing.base,
+                  opacity: pressed ? 0.85 : 1,
+                },
+              ]}
+            >
+              <View style={styles.cardHeaderBetween}>
+                <View style={styles.headerTitleGroup}>
+                  <View
+                    style={[
+                      styles.iconBadgeSmall,
+                      {
+                        backgroundColor: colors.surfaceElevated,
+                        borderRadius: radius.sm,
+                      },
+                    ]}
+                  >
+                    <AppIcon name="trophy" size={14} color={colors.primary} />
+                  </View>
+                  <Text
+                    style={[
+                      typography.caption,
+                      styles.cardHeaderLabel,
+                      { color: colors.textSecondary },
+                    ]}
+                  >
+                    EVENT HIGH SCORE (NP)
+                  </Text>
+                </View>
+
+                <AppIcon name="arrow-up-right" size={14} color={colors.primary} />
+              </View>
+
+              <View style={[styles.contentRowBetween, { marginTop: spacing.sm }]}>
+                <Text
+                  style={[
+                    styles.tabularHeroValue,
+                    { color: colors.textPrimary },
+                  ]}
+                >
+                  {stats?.highScore ?? 0} pts
+                </Text>
+
+                <Text
+                  style={[
+                    typography.subhead,
+                    styles.sideMetricLabel,
+                    { color: colors.textSecondary, textAlign: 'right' },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {stats?.highScoreMatch || 'Peak Alliance Score'}
+                </Text>
+              </View>
+            </Pressable>
+          </View>
+        )}
+      </View>
+
+      {/* ─────────────────────────────────────────────────────────────
+          SECTION 2: OPR Breakdown & Ranks Card
+         ───────────────────────────────────────────────────────────── */}
+      {hasTeamMatches && hasQualMatches && (
+        <View
+          style={[
+            styles.breakdownCard,
+            shadows.sm,
+            {
+              backgroundColor: colors.surface,
+              borderRadius: radius.md,
+              padding: spacing.base,
+            },
+          ]}
+          accessible
+          accessibilityRole="summary"
+          accessibilityLabel="OPR Breakdown and Ranks"
+        >
+          <View style={styles.cardHeaderBetween}>
+            <View style={styles.cardHeaderLeft}>
+              <Text style={[typography.caption, { color: colors.textSecondary, fontWeight: '700' }]}>
+                OPR BREAKDOWN & RANKS
+              </Text>
+              <Text style={[styles.mainMetricValue, { color: colors.primary, marginTop: spacing.xs }]}>
+                {stats?.opr?.totalOpr != null ? stats.opr.totalOpr.toFixed(2) : '0.00'}
+                <Text style={[typography.caption, { color: colors.textMuted }]}> Total OPR</Text>
+              </Text>
+            </View>
+            <StatusBadge
+              variant="gold"
+              label={`EVENT RANK: ${totalEventRank.toUpperCase()}`}
+              size="sm"
+            />
+          </View>
+
+          <View
+            style={[
+              styles.columnsRow,
+              {
+                marginTop: spacing.md,
+                paddingTop: spacing.sm,
+                borderTopWidth: 1,
+                borderTopColor: colors.borderSubtle,
+              },
+            ]}
+          >
+            {/* Auto OPR */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>Auto OPR</Text>
+              <Text style={[styles.columnMetricValue, { color: colors.textPrimary }]}>
+                {stats?.opr?.autoOpr != null ? stats.opr.autoOpr.toFixed(1) : '0.0'}
+              </Text>
+              <Text style={[typography.caption, { color: colors.textMuted, fontSize: 11, marginTop: 2 }]}>
+                Event Rank: {autoEventRank}
+              </Text>
+            </View>
+
+            <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
+
+            {/* TeleOp OPR */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>TeleOp OPR</Text>
+              <Text style={[styles.columnMetricValue, { color: colors.textPrimary }]}>
+                {stats?.opr?.teleopOpr != null ? stats.opr.teleopOpr.toFixed(1) : '0.0'}
+              </Text>
+              <Text style={[typography.caption, { color: colors.textMuted, fontSize: 11, marginTop: 2 }]}>
+                Event Rank: {teleopEventRank}
+              </Text>
+            </View>
+
+            <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
+
+            {/* Endgame OPR */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>Endgame OPR</Text>
+              <Text style={[styles.columnMetricValue, { color: colors.textPrimary }]}>
+                {stats?.opr?.endgameOpr != null ? stats.opr.endgameOpr.toFixed(1) : '0.0'}
+              </Text>
+              <Text style={[typography.caption, { color: colors.textMuted, fontSize: 11, marginTop: 2 }]}>
+                Event Rank: {endgameEventRank}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          SECTION 3: Average Scores Card (Average Score + Avg Winning Margin)
+         ───────────────────────────────────────────────────────────── */}
+      {hasTeamMatches && hasQualMatches && (
+        <View
+          style={[
+            styles.breakdownCard,
+            shadows.sm,
+            {
+              backgroundColor: colors.surface,
+              borderRadius: radius.md,
+              padding: spacing.base,
+            },
+          ]}
+          accessible
+          accessibilityRole="summary"
+          accessibilityLabel="Average Scores Breakdown"
+        >
+          <View style={styles.cardHeaderBetween}>
+            <View style={styles.cardHeaderLeft}>
+              <Text style={[typography.caption, { color: colors.textSecondary, fontWeight: '700' }]}>
+                AVERAGE SCORE
+              </Text>
+              <Text style={[styles.mainMetricValue, { color: colors.textPrimary, marginTop: spacing.xs }]}>
+                {stats?.averages?.totalAvg != null ? stats.averages.totalAvg.toFixed(1) : '0.0'} pts
+              </Text>
+            </View>
+
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={[typography.caption, { color: colors.textSecondary, fontWeight: '700' }]}>
+                AVG SCORE MARGIN
+              </Text>
               <Text
                 style={[
-                  styles.tabularNumberHeading,
+                  styles.mainMetricValue,
                   {
-                    color: isTopRank ? colors.accentGold : colors.textPrimary,
+                    color: avgScoreMargin < 0 ? colors.destructive : colors.statusLive,
                     marginTop: spacing.xs,
                   },
                 ]}
               >
-                {stats?.rank ? `#${stats.rank}` : 'Unranked'}
+                {avgScoreMargin > 0 ? '+' : ''}
+                {avgScoreMargin.toFixed(1)} pts
               </Text>
-
-              <Text
-                style={[
-                  typography.caption,
-                  { color: colors.textMuted, marginTop: 2 },
-                ]}
-              >
-                of {stats?.totalTeams ?? 0} Teams
-              </Text>
-            </Animated.View>
-
-            {/* Tile 2: Event Record */}
-            <Animated.View
-              entering={reducedMotion ? undefined : FadeInDown.duration(260).delay(100)}
-              style={[
-                styles.kpiTile,
-                shadows.sm,
-                {
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                  borderRadius: radius.md,
-                  padding: spacing.base,
-                },
-              ]}
-              accessible
-              accessibilityRole="summary"
-              accessibilityLabel={`Event Record: ${stats?.wins ?? 0} wins, ${stats?.losses ?? 0} losses, ${stats?.ties ?? 0} ties, ${normalizedWinRate.toFixed(1)}% win rate`}
-            >
-              <View style={styles.tileHeaderRow}>
-                <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                  EVENT RECORD
-                </Text>
-                <View
-                  style={[
-                    styles.iconCircle,
-                    { backgroundColor: colors.successSoft },
-                  ]}
-                >
-                  <AppIcon name="check-circle" size={14} color={colors.success} />
-                </View>
-              </View>
-
-              <Text
-                style={[
-                  styles.tabularNumberHeading,
-                  { color: colors.textPrimary, marginTop: spacing.xs },
-                ]}
-              >
-                {stats?.wins ?? 0}-{stats?.losses ?? 0}-{stats?.ties ?? 0}
-              </Text>
-
-              <View style={{ marginTop: spacing.xs, alignSelf: 'flex-start' }}>
-                <StatusBadge
-                  variant="success"
-                  label={`${normalizedWinRate.toFixed(1)}% WIN RATE`}
-                  size="sm"
-                />
-              </View>
-            </Animated.View>
+            </View>
           </View>
 
-          {/* Row 2: Total OPR & High Score */}
-          <View style={[styles.kpiRow, { gap: spacing.sm }]}>
-            {/* Tile 3: Total Event OPR */}
-            <Animated.View
-              entering={reducedMotion ? undefined : FadeInDown.duration(260).delay(150)}
-              style={[
-                styles.kpiTile,
-                shadows.sm,
-                {
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                  borderRadius: radius.md,
-                  padding: spacing.base,
-                },
-              ]}
-              accessible
-              accessibilityRole="summary"
-              accessibilityLabel={`Total Event OPR: ${stats?.opr?.totalOpr?.toFixed(2) ?? '0.00'}, Ridge OLS Offensive Rating`}
-            >
-              <View style={styles.tileHeaderRow}>
-                <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                  TOTAL EVENT OPR
-                </Text>
-                <View
-                  style={[
-                    styles.iconCircle,
-                    { backgroundColor: colors.primarySoft },
-                  ]}
-                >
-                  <AppIcon name="bolt" size={14} color={colors.primary} />
-                </View>
-              </View>
-
-              <Text
-                style={[
-                  styles.tabularNumberHeading,
-                  { color: colors.primary, marginTop: spacing.xs },
-                ]}
-              >
-                {stats?.opr?.totalOpr != null
-                  ? stats.opr.totalOpr.toFixed(2)
-                  : '0.00'}
+          <View
+            style={[
+              styles.columnsRow,
+              {
+                marginTop: spacing.md,
+                paddingTop: spacing.sm,
+                borderTopWidth: 1,
+                borderTopColor: colors.borderSubtle,
+              },
+            ]}
+          >
+            {/* Avg Autonomous */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>Avg Autonomous</Text>
+              <Text style={[styles.columnMetricValue, { color: colors.textPrimary }]}>
+                {stats?.averages?.autoAvg != null ? stats.averages.autoAvg.toFixed(1) : '0.0'}
               </Text>
+            </View>
 
-              <Text
-                style={[
-                  typography.caption,
-                  { color: colors.textMuted, marginTop: 2 },
-                ]}
-                numberOfLines={1}
-              >
-                Ridge OLS Offensive Rating
+            <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
+
+            {/* Avg TeleOp */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>Avg TeleOp</Text>
+              <Text style={[styles.columnMetricValue, { color: colors.textPrimary }]}>
+                {stats?.averages?.teleopAvg != null ? stats.averages.teleopAvg.toFixed(1) : '0.0'}
               </Text>
-            </Animated.View>
+            </View>
 
-            {/* Tile 4: Event High Score */}
-            <Animated.View
-              entering={reducedMotion ? undefined : FadeInDown.duration(260).delay(200)}
-              style={[
-                styles.kpiTile,
-                shadows.sm,
-                {
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                  borderRadius: radius.md,
-                  padding: spacing.base,
-                },
-              ]}
-              accessible
-              accessibilityRole="summary"
-              accessibilityLabel={`Event High Score: ${stats?.highScore ?? 0} points, ${stats?.highScoreMatch || 'Peak Alliance Score'}`}
-            >
-              <View style={styles.tileHeaderRow}>
-                <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                  EVENT HIGH SCORE
-                </Text>
-                <View
-                  style={[
-                    styles.iconCircle,
-                    { backgroundColor: colors.accentGoldSoft },
-                  ]}
-                >
-                  <AppIcon name="arrow-up-right" size={14} color={colors.accentGold} />
-                </View>
-              </View>
+            <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
 
-              <Text
-                style={[
-                  styles.tabularNumberHeading,
-                  { color: colors.textPrimary, marginTop: spacing.xs },
-                ]}
-              >
-                {stats?.highScore ? `${stats.highScore} PTS` : '—'}
+            {/* Avg Endgame */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>Avg Endgame</Text>
+              <Text style={[styles.columnMetricValue, { color: colors.textPrimary }]}>
+                {stats?.averages?.endgameAvg != null ? stats.averages.endgameAvg.toFixed(1) : '0.0'}
               </Text>
-
-              <Text
-                style={[
-                  typography.caption,
-                  { color: colors.textMuted, marginTop: 2 },
-                ]}
-                numberOfLines={1}
-              >
-                {stats?.highScoreMatch || 'Peak Alliance Score'}
-              </Text>
-            </Animated.View>
+            </View>
           </View>
         </View>
-      </View>
+      )}
 
       {/* ─────────────────────────────────────────────────────────────
-          SECTION 2: 2025 DECODE Period Breakdown Card
-          (Individual OPR vs. Alliance Match Average)
+          SECTION 4: Penalty Telemetry Card (Awarded, Conceded, Net)
          ───────────────────────────────────────────────────────────── */}
-      <Animated.View
-        entering={reducedMotion ? undefined : FadeInDown.duration(280).delay(250)}
-        style={[
-          styles.cardContainer,
-          shadows.md,
-          {
-            backgroundColor: colors.card,
-            borderColor: colors.border,
-            borderRadius: radius.lg,
-            padding: spacing.base,
-          },
-        ]}
-        accessible
-        accessibilityRole="summary"
-        accessibilityLabel="2025 DECODE Period Breakdown Card"
-      >
-        {/* Card Header & Legend */}
-        <View style={styles.periodCardHeader}>
-          <View style={styles.periodTitleRow}>
-            <View
-              style={[
-                styles.iconCircle,
-                { backgroundColor: colors.primarySoft, width: 32, height: 32 },
-              ]}
-            >
-              <AppIcon name="chart" size={18} color={colors.primary} />
-            </View>
-            <View style={{ flex: 1, marginLeft: spacing.sm }}>
-              <Text style={[typography.headline, { color: colors.textPrimary }]}>
-                2025 DECODE Period Breakdown
-              </Text>
-              <Text style={[typography.caption, { color: colors.textSecondary, marginTop: 2 }]}>
-                Individual OPR vs. Alliance Match Average
-              </Text>
-            </View>
-          </View>
-
-          {/* Visual Legend */}
-          <View style={[styles.legendRow, { marginTop: spacing.md }]}>
-            <View style={styles.legendItem}>
-              <View
-                style={[
-                  styles.legendSolidIndicator,
-                  { backgroundColor: colors.primary },
-                ]}
-              />
-              <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                BrickBot OPR
-              </Text>
-            </View>
-
-            <View style={styles.legendItem}>
-              <View
-                style={[
-                  styles.legendOutlineIndicator,
-                  {
-                    backgroundColor: colors.neutralSoft,
-                    borderColor: colors.neutral,
-                  },
-                ]}
-              />
-              <Text style={[typography.caption, { color: colors.textSecondary }]}>
-                Alliance Average
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* 3 Game Periods Breakdown */}
-        <View style={[styles.periodsList, { gap: spacing.base, marginTop: spacing.md }]}>
-          {periods.map((period) => {
-            const oprWidthPercent = Math.min(
-              100,
-              Math.max(4, (period.oprValue / maxScale) * 100)
-            );
-            const avgWidthPercent = Math.min(
-              100,
-              Math.max(4, (period.avgValue / maxScale) * 100)
-            );
-
-            return (
-              <PeriodRow
-                key={period.id}
-                period={period}
-                oprWidthPercent={oprWidthPercent}
-                avgWidthPercent={avgWidthPercent}
-                progressAnimation={progressAnimation}
-                reducedMotion={reducedMotion}
-              />
-            );
-          })}
-        </View>
-
-        {/* Summary Comparison Footer */}
+      {hasTeamMatches && hasQualMatches && (
         <View
           style={[
-            styles.summaryFooter,
+            styles.breakdownCard,
+            shadows.sm,
             {
-              backgroundColor: colors.surfaceElevated,
-              borderColor: colors.borderSubtle,
+              backgroundColor: colors.surface,
               borderRadius: radius.md,
-              padding: spacing.md,
-              marginTop: spacing.lg,
+              padding: spacing.base,
             },
           ]}
+          accessible
+          accessibilityRole="summary"
+          accessibilityLabel={`Penalty Telemetry: Avg Awarded +${finalAvgAwarded.toFixed(1)} points gained, Avg Conceded -${finalAvgConceded.toFixed(1)} points given away, Net Penalties ${finalNetPenalties > 0 ? '+' : ''}${finalNetPenalties.toFixed(1)} points`}
         >
-          <View style={styles.summaryTotalsRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={[typography.caption, { color: colors.textMuted }]}>
-                TOTAL INDIVIDUAL OPR
-              </Text>
-              <Text
+          <View style={styles.cardHeaderBetween}>
+            <View style={styles.headerTitleGroup}>
+              <View
                 style={[
-                  styles.tabularMonoMedium,
-                  { color: colors.primary, marginTop: 2 },
+                  styles.iconBadgeSmall,
+                  {
+                    backgroundColor: colors.surfaceElevated,
+                    borderRadius: radius.sm,
+                  },
                 ]}
               >
-                {totalOpr.toFixed(1)} pts
+                <AppIcon name="alert-circle" size={14} color={colors.primary} />
+              </View>
+              <Text style={[typography.caption, styles.cardHeaderLabel, { color: colors.textSecondary }]}>
+                PENALTY TELEMETRY
               </Text>
             </View>
 
-            <View style={[styles.verticalDivider, { backgroundColor: colors.borderSubtle }]} />
-
-            <View style={{ flex: 1, paddingLeft: spacing.md }}>
-              <Text style={[typography.caption, { color: colors.textMuted }]}>
-                ALLIANCE MATCH AVG
-              </Text>
-              <Text
-                style={[
-                  styles.tabularMonoMedium,
-                  { color: colors.textPrimary, marginTop: 2 },
-                ]}
-              >
-                {totalAvg.toFixed(1)} pts
-              </Text>
-            </View>
-          </View>
-
-          {/* Offensive Contribution Badge & Explanation */}
-          <View style={[styles.shareRow, { marginTop: spacing.sm }]}>
             <StatusBadge
-              variant={offensiveSharePct >= 50 ? 'success' : 'gold'}
-              label={`${offensiveSharePct}% ALLIANCE OUTPUT`}
+              variant={finalNetPenalties >= 0 ? 'live' : 'red'}
+              label={finalNetPenalties >= 0 ? 'NET POSITIVE' : 'NET DEFICIT'}
               size="sm"
             />
-            <Text
-              style={[
-                typography.caption,
-                { color: colors.textSecondary, flex: 1, marginLeft: spacing.sm },
-              ]}
-              numberOfLines={2}
-            >
-              BrickBot accounts for {offensiveSharePct}% of total alliance match scoring.
-            </Text>
           </View>
-        </View>
-      </Animated.View>
 
-      {/* ─────────────────────────────────────────────────────────────
-          SECTION 3: Match Score Progression & Performance Trajectory Card
-         ───────────────────────────────────────────────────────────── */}
-      <Animated.View
-        entering={reducedMotion ? undefined : FadeInDown.duration(280).delay(350)}
-        style={[
-          styles.cardContainer,
-          shadows.md,
-          {
-            backgroundColor: colors.card,
-            borderColor: colors.border,
-            borderRadius: radius.lg,
-            padding: spacing.base,
-          },
-        ]}
-        accessible
-        accessibilityRole="summary"
-        accessibilityLabel="Match Score Progression and Performance Trajectory Card"
-      >
-        <View style={styles.sectionHeaderRow}>
-          <View>
-            <Text style={[typography.headline, { color: colors.textPrimary }]}>
-              Match Score Progression
-            </Text>
-            <Text
-              style={[
-                typography.caption,
-                { color: colors.textSecondary, marginTop: 2 },
-              ]}
-            >
-              Performance trajectory across {completedMatches.length} completed matches
-            </Text>
-          </View>
-          <StatusBadge
-            variant="neutral"
-            label={`${completedMatches.length} RECORDED`}
-            size="sm"
-          />
-        </View>
-
-        {completedMatches.length === 0 ? (
           <View
             style={[
-              styles.emptyCard,
+              styles.columnsRow,
               {
-                backgroundColor: colors.surfaceElevated,
-                borderRadius: radius.md,
-                padding: spacing.lg,
                 marginTop: spacing.md,
+                paddingTop: spacing.sm,
+                borderTopWidth: 1,
+                borderTopColor: colors.borderSubtle,
               },
             ]}
           >
-            <AppIcon name="clock" size={24} color={colors.textMuted} />
-            <Text
-              style={[
-                typography.subhead,
-                { color: colors.textSecondary, marginTop: spacing.xs, textAlign: 'center' },
-              ]}
-            >
-              No completed matches on record yet for this tournament.
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.matchesList, { gap: spacing.md, marginTop: spacing.md }]}>
-            {completedMatches.map((match, index) => {
-              const isTargetRed =
-                match.targetTeamAlliance === 'Red' ||
-                match.targetTeamAlliance == null;
-              const ourScore = isTargetRed
-                ? match.scoreRedFinal ?? 0
-                : match.scoreBlueFinal ?? 0;
-              const oppScore = isTargetRed
-                ? match.scoreBlueFinal ?? 0
-                : match.scoreRedFinal ?? 0;
+            {/* 1. AVG AWARDED */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>Avg Awarded</Text>
+              <Text style={[styles.columnMetricValue, { color: colors.statusLive }]}>
+                +{finalAvgAwarded.toFixed(1)}
+              </Text>
+              <Text style={[typography.caption, { color: colors.textMuted, fontSize: 11, marginTop: 2 }]}>
+                Opponent fouls
+              </Text>
+            </View>
 
-              // Color based on Match Result: Emerald for WIN, Red for LOSS, Gold for TIE
-              const resultColor =
-                match.result === 'WIN'
-                  ? colors.success
-                  : match.result === 'LOSS'
-                  ? colors.destructive
-                  : colors.accentGold;
+            <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
 
-              const resultBadgeVariant =
-                match.result === 'WIN'
-                  ? 'success'
-                  : match.result === 'LOSS'
-                  ? 'red'
-                  : 'gold';
+            {/* 2. AVG CONCEDED */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>Avg Conceded</Text>
+              <Text style={[styles.columnMetricValue, { color: colors.destructive }]}>
+                -{finalAvgConceded.toFixed(1)}
+              </Text>
+              <Text style={[typography.caption, { color: colors.textMuted, fontSize: 11, marginTop: 2 }]}>
+                Own fouls
+              </Text>
+            </View>
 
-              const scoreBarWidthPercent = Math.min(
-                100,
-                Math.max(12, (ourScore / maxMatchScore) * 100)
-              );
+            <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
 
-              return (
-                <View
-                  key={match.matchId || `match-${match.matchNumber}-${index}`}
-                  style={[
-                    styles.matchRowContainer,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.borderSubtle,
-                      borderRadius: radius.md,
-                      padding: spacing.md,
-                    },
-                  ]}
-                  accessible
-                  accessibilityRole="text"
-                  accessibilityLabel={`${formatMatchLabel(match)}, Result ${match.result}, Score ${ourScore} to ${oppScore}`}
-                >
-                  {/* Top Match Metadata & VOD Button */}
-                  <View style={styles.matchTopRow}>
-                    <View style={styles.matchInfoGroup}>
-                      {/* Match Identifier */}
-                      <Text
-                        style={[
-                          styles.tabularMonoBold,
-                          { color: colors.textPrimary },
-                        ]}
-                      >
-                        {formatMatchLabel(match)}
-                      </Text>
-
-                      {/* Alliance Color Pill */}
-                      <View
-                        style={[
-                          styles.allianceColorPill,
-                          {
-                            backgroundColor:
-                              match.targetTeamAlliance === 'Blue'
-                                ? colors.allianceBlueSoft
-                                : colors.primarySoft,
-                            borderColor:
-                              match.targetTeamAlliance === 'Blue'
-                                ? colors.allianceBlue
-                                : colors.primary,
-                          },
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.allianceDot,
-                            {
-                              backgroundColor:
-                                match.targetTeamAlliance === 'Blue'
-                                ? colors.allianceBlue
-                                : colors.primary,
-                            },
-                          ]}
-                        />
-                        <Text
-                          style={[
-                            typography.caption,
-                            {
-                              color:
-                                match.targetTeamAlliance === 'Blue'
-                                  ? colors.allianceBlue
-                                  : colors.primary,
-                              fontWeight: '700',
-                            },
-                          ]}
-                        >
-                          {match.targetTeamAlliance?.toUpperCase() || 'RED'}
-                        </Text>
-                      </View>
-
-                      {/* Result Pill Badge */}
-                      <StatusBadge
-                        variant={resultBadgeVariant}
-                        label={match.result}
-                        size="sm"
-                      />
-                    </View>
-
-                    {/* VOD Action Button (Strict Touch Target: minHeight 44) */}
-                    <Pressable
-                      onPress={() => onSelectMatchForVod?.(match)}
-                      style={({ pressed }) => [
-                        styles.vodButton,
-                        {
-                          backgroundColor: match.vodUrl
-                            ? colors.primarySoft
-                            : colors.neutralSoft,
-                          borderColor: match.vodUrl
-                            ? colors.primary
-                            : colors.border,
-                          borderRadius: radius.sm,
-                          opacity: pressed ? 0.75 : 1,
-                        },
-                      ]}
-                      hitSlop={8}
-                      accessible
-                      accessibilityRole="button"
-                      accessibilityLabel={`Watch match VOD stream for ${formatMatchLabel(match)}`}
-                      accessibilityHint="Navigates to the video broadcast player"
-                    >
-                      <AppIcon
-                        name="video"
-                        size={16}
-                        color={match.vodUrl ? colors.primary : colors.textSecondary}
-                      />
-                      <Text
-                        style={[
-                          typography.subhead,
-                          {
-                            color: match.vodUrl ? colors.primary : colors.textSecondary,
-                            fontWeight: '700',
-                            marginLeft: spacing.xs,
-                          },
-                        ]}
-                      >
-                        VOD
-                      </Text>
-                    </Pressable>
-                  </View>
-
-                  {/* Score Display & Bar Progression */}
-                  <View style={[styles.scoreProgressionBlock, { marginTop: spacing.sm }]}>
-                    <View style={styles.scoreRow}>
-                      <Text
-                        style={[
-                          styles.scoreDisplayLarge,
-                          { color: colors.textPrimary },
-                        ]}
-                      >
-                        {ourScore}
-                        <Text style={{ color: colors.textMuted }}> – </Text>
-                        <Text style={{ color: colors.textSecondary }}>{oppScore}</Text>
-                      </Text>
-
-                      <Text
-                        style={[
-                          typography.caption,
-                          { color: colors.textMuted },
-                        ]}
-                      >
-                        {match.field ? `Field ${match.field}` : 'Tournament Match'}
-                      </Text>
-                    </View>
-
-                    {/* Horizontal Score Progression Bar */}
-                    <View
-                      style={[
-                        styles.scoreBarTrack,
-                        {
-                          backgroundColor: colors.borderSubtle,
-                          borderRadius: radius.full,
-                        },
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.scoreBarFill,
-                          {
-                            width: `${scoreBarWidthPercent}%`,
-                            backgroundColor: resultColor,
-                            borderRadius: radius.full,
-                          },
-                        ]}
-                      />
-                    </View>
-                  </View>
-                </View>
-              );
-            })}
-          </View>
-        )}
-      </Animated.View>
-    </View>
-  );
-}
-
-/**
- * Period Row Component rendering dual proportional horizontal progress bars:
- * - One solid bar in period accent color for BrickBot's Individual OPR
- * - One soft/outlined bar for Alliance Match Average
- */
-function PeriodRow({
-  period,
-  oprWidthPercent,
-  avgWidthPercent,
-  progressAnimation,
-  reducedMotion,
-}: {
-  period: PeriodBreakdownConfig;
-  oprWidthPercent: number;
-  avgWidthPercent: number;
-  progressAnimation: SharedValue<number>;
-  reducedMotion: boolean | null;
-}) {
-  const { colors, typography, spacing, radius } = useAppTheme();
-
-  const animatedOprStyle = useAnimatedStyle(() => {
-    return {
-      width: `${Math.min(100, Math.max(0, oprWidthPercent * progressAnimation.value))}%`,
-    };
-  });
-
-  const animatedAvgStyle = useAnimatedStyle(() => {
-    return {
-      width: `${Math.min(100, Math.max(0, avgWidthPercent * progressAnimation.value))}%`,
-    };
-  });
-
-  return (
-    <View
-      style={[
-        styles.periodItemContainer,
-        {
-          borderColor: colors.borderSubtle,
-          borderRadius: radius.md,
-          backgroundColor: colors.surfaceElevated,
-          padding: spacing.md,
-        },
-      ]}
-      accessible
-      accessibilityRole="text"
-      accessibilityLabel={`${period.title}: BrickBot OPR ${period.oprValue.toFixed(1)} points, Alliance Average ${period.avgValue.toFixed(1)} points`}
-    >
-      {/* Title & Numeric Values Row */}
-      <View style={styles.periodRowHeader}>
-        <View style={styles.periodLeftHeader}>
-          <View
-            style={[
-              styles.iconCircleSm,
-              { backgroundColor: period.softColor },
-            ]}
-          >
-            <AppIcon name={period.icon} size={14} color={period.accentColor} />
-          </View>
-          <View style={{ marginLeft: spacing.xs }}>
-            <Text style={[typography.subhead, { color: colors.textPrimary, fontWeight: '700' }]}>
-              {period.title}
-            </Text>
-            <Text style={[typography.caption, { color: colors.textMuted }]}>
-              {period.subtitle}
-            </Text>
+            {/* 3. NET PENALTIES */}
+            <View style={styles.metricColumn}>
+              <Text style={[typography.caption, { color: colors.textSecondary }]}>Net Penalties</Text>
+              <Text
+                style={[
+                  styles.columnMetricValue,
+                  {
+                    color: finalNetPenalties >= 0 ? colors.statusLive : colors.destructive,
+                  },
+                ]}
+              >
+                {finalNetPenalties > 0 ? '+' : ''}
+                {finalNetPenalties.toFixed(1)}
+              </Text>
+              <Text style={[typography.caption, { color: colors.textMuted, fontSize: 11, marginTop: 2 }]}>
+                Net margin
+              </Text>
+            </View>
           </View>
         </View>
-
-        {/* Numeric Telemetry Readouts */}
-        <View style={styles.periodTelemetryValues}>
-          <View style={styles.telemetryStat}>
-            <Text style={[typography.caption, { color: colors.textMuted }]}>
-              OPR
-            </Text>
-            <Text
-              style={[
-                styles.tabularMonoMedium,
-                { color: period.accentColor },
-              ]}
-            >
-              {period.oprValue.toFixed(1)}
-            </Text>
-          </View>
-
-          <View style={[styles.inlineDivider, { backgroundColor: colors.borderSubtle }]} />
-
-          <View style={styles.telemetryStat}>
-            <Text style={[typography.caption, { color: colors.textMuted }]}>
-              AVG
-            </Text>
-            <Text
-              style={[
-                styles.tabularMonoMedium,
-                { color: colors.textPrimary },
-              ]}
-            >
-              {period.avgValue.toFixed(1)}
-            </Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Dual Proportional Progress Bars */}
-      <View style={[styles.dualBarContainer, { marginTop: spacing.md, gap: spacing.xs }]}>
-        {/* Solid Bar: BrickBot Individual OPR */}
-        <View style={styles.barLine}>
-          <Text style={[styles.barMicroLabel, { color: period.accentColor }]}>
-            BrickBot OPR
-          </Text>
-          <View
-            style={[
-              styles.barTrack,
-              {
-                backgroundColor: colors.background,
-                borderRadius: radius.full,
-              },
-            ]}
-          >
-            <Animated.View
-              style={[
-                styles.barFill,
-                {
-                  backgroundColor: period.accentColor,
-                  borderRadius: radius.full,
-                },
-                reducedMotion ? { width: `${oprWidthPercent}%` } : animatedOprStyle,
-              ]}
-            />
-          </View>
-        </View>
-
-        {/* Soft / Outlined Bar: Alliance Match Average */}
-        <View style={styles.barLine}>
-          <Text style={[styles.barMicroLabel, { color: colors.textMuted }]}>
-            Alliance Avg
-          </Text>
-          <View
-            style={[
-              styles.barTrack,
-              {
-                backgroundColor: colors.background,
-                borderRadius: radius.full,
-              },
-            ]}
-          >
-            <Animated.View
-              style={[
-                styles.barFill,
-                {
-                  backgroundColor: period.softColor,
-                  borderColor: period.accentColor,
-                  borderWidth: 1,
-                  borderRadius: radius.full,
-                },
-                reducedMotion ? { width: `${avgWidthPercent}%` } : animatedAvgStyle,
-              ]}
-            />
-          </View>
-        </View>
-      </View>
+      )}
     </View>
   );
 }
@@ -1026,224 +730,92 @@ const styles = StyleSheet.create({
   sectionBlock: {
     width: '100%',
   },
-  kpiGrid: {
+  noticeCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noticeIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  horizontalCardsStack: {
     width: '100%',
   },
-  kpiRow: {
-    flexDirection: 'row',
+  horizontalKpiCard: {
     width: '100%',
   },
-  kpiTile: {
-    flex: 1,
-  },
-  tileHeaderRow: {
+  cardHeaderBetween: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
   },
-  tabularNumberHeading: {
+  headerTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  iconBadgeSmall: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardHeaderLabel: {
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  contentRowBetween: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  tabularHeroValue: {
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.5,
+  },
+  sideMetricLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  breakdownCard: {
+    width: '100%',
+  },
+  cardHeaderLeft: {
+    flex: 1,
+  },
+  mainMetricValue: {
     fontSize: 24,
     lineHeight: 30,
     fontWeight: '800',
     fontVariant: ['tabular-nums'],
     letterSpacing: -0.5,
   },
-  cardContainer: {
-    borderWidth: 1,
-    width: '100%',
-  },
-  periodCardHeader: {
-    width: '100%',
-  },
-  periodTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  legendSolidIndicator: {
-    width: 12,
-    height: 8,
-    borderRadius: 2,
-  },
-  legendOutlineIndicator: {
-    width: 12,
-    height: 8,
-    borderRadius: 2,
-    borderWidth: 1,
-  },
-  periodsList: {
-    width: '100%',
-  },
-  periodItemContainer: {
-    borderWidth: 1,
-    width: '100%',
-  },
-  periodRowHeader: {
+  columnsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  periodLeftHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  metricColumn: {
     flex: 1,
-  },
-  periodTelemetryValues: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  telemetryStat: {
-    alignItems: 'flex-end',
-  },
-  inlineDivider: {
-    width: 1,
-    height: 22,
-  },
-  dualBarContainer: {
-    width: '100%',
-  },
-  barLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  barMicroLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    width: 72,
-    textAlign: 'right',
-  },
-  barTrack: {
-    flex: 1,
-    height: 8,
-    overflow: 'hidden',
-  },
-  barFill: {
-    height: '100%',
-  },
-  summaryFooter: {
-    borderWidth: 1,
-    width: '100%',
-  },
-  summaryTotalsRow: {
-    flexDirection: 'row',
     alignItems: 'center',
   },
-  verticalDivider: {
-    width: 1,
-    height: 36,
-  },
-  shareRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  emptyCard: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  matchesList: {
-    width: '100%',
-  },
-  matchRowContainer: {
-    borderWidth: 1,
-    width: '100%',
-  },
-  matchTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  matchInfoGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-    flex: 1,
-  },
-  allianceColorPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    gap: 4,
-  },
-  allianceDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  vodButton: {
-    minHeight: 44,
-    minWidth: 72,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-    borderWidth: 1,
-  },
-  scoreProgressionBlock: {
-    width: '100%',
-  },
-  scoreRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    marginBottom: 6,
-  },
-  scoreDisplayLarge: {
-    fontSize: 20,
-    lineHeight: 26,
+  columnMetricValue: {
+    fontSize: 18,
     fontWeight: '800',
     fontVariant: ['tabular-nums'],
-    letterSpacing: -0.4,
+    marginTop: 4,
   },
-  scoreBarTrack: {
-    width: '100%',
-    height: 6,
-    overflow: 'hidden',
-  },
-  scoreBarFill: {
-    height: '100%',
-  },
-  iconCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  iconCircleSm: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  tabularMonoBold: {
-    fontSize: 15,
-    fontWeight: '700',
-    fontVariant: ['tabular-nums'],
-  },
-  tabularMonoMedium: {
-    fontSize: 14,
-    fontWeight: '600',
-    fontVariant: ['tabular-nums'],
+  metricDivider: {
+    width: 1,
+    height: 36,
   },
 });

@@ -29,11 +29,11 @@ export interface VideoVodTabProps {
  * - youtube.com/live/ID
  * - youtube.com/embed/ID
  * - youtube-nocookie.com/embed/ID
- * Fallback ID: 'H920hSVJw7E'
+ * Returns null if the URL is missing or not a valid YouTube stream URL.
  */
-export function extractYouTubeVideoId(url: string | null | undefined): string {
+export function extractYouTubeVideoId(url: string | null | undefined): string | null {
   if (!url || typeof url !== 'string') {
-    return 'H920hSVJw7E';
+    return null;
   }
   const clean = url.trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(clean)) {
@@ -42,7 +42,7 @@ export function extractYouTubeVideoId(url: string | null | undefined): string {
   const regExp =
     /(?:youtube(?:-nocookie)?\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?|live)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
   const match = clean.match(regExp);
-  return match && match[1] ? match[1] : 'H920hSVJw7E';
+  return match && match[1] ? match[1] : null;
 }
 
 /**
@@ -74,21 +74,85 @@ export function VideoVodTab({
   const [isWebViewLoading, setIsWebViewLoading] = useState<boolean>(true);
 
   // 1. YouTube URL and Timestamp Extraction
-  const rawUrl =
-    selectedMatch?.vodUrl ||
-    event.liveStreamUrl ||
-    'https://www.youtube.com/watch?v=H920hSVJw7E';
+  // Functional #2: Do NOT show another event's VOD when stream link is missing
+  const activeStreamUrl = selectedMatch?.vodUrl || event.liveStreamUrl || null;
+  const videoId = extractYouTubeVideoId(activeStreamUrl);
 
-  const videoId = extractYouTubeVideoId(rawUrl);
-  const startSeconds = selectedMatch?.vodTimestampSeconds ?? 0;
+  // If no stream URL or invalid YouTube ID, render clean borderless empty state
+  if (!activeStreamUrl || !videoId) {
+    return (
+      <View style={styles.container}>
+        <View
+          style={[
+            styles.emptyContainer,
+            shadows.sm,
+            {
+              backgroundColor: colors.surface,
+              borderRadius: radius.md,
+              padding: spacing.xl,
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.emptyIconCircle,
+              { backgroundColor: colors.neutralSoft },
+            ]}
+          >
+            <AppIcon name="video" size={32} color={colors.textSecondary} />
+          </View>
+          <Text
+            style={[
+              typography.headline,
+              { color: colors.textPrimary, marginTop: spacing.md, textAlign: 'center' },
+            ]}
+          >
+            No Stream or VOD Linked for This Event
+          </Text>
+          <Text
+            style={[
+              typography.body,
+              {
+                color: colors.textSecondary,
+                marginTop: spacing.xs,
+                textAlign: 'center',
+                maxWidth: 320,
+              },
+            ]}
+          >
+            An official broadcast link was not published for this tournament.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
-  const embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0&modestbranding=1&start=${startSeconds}`;
+  // Functional #7: Compute start and end timestamps (~2:45 / 165 seconds duration)
+  const isMatchSelected = selectedMatch !== null;
+  const startSeconds = isMatchSelected
+    ? (selectedMatch.vodStartSeconds ?? selectedMatch.vodTimestampSeconds ?? 300)
+    : 0;
+  const endSeconds = isMatchSelected
+    ? (selectedMatch.vodEndSeconds ?? (startSeconds + 165))
+    : null;
+
+  const intervalText =
+    isMatchSelected && endSeconds != null
+      ? `${formatTimestamp(startSeconds)} – ${formatTimestamp(endSeconds)}`
+      : formatTimestamp(startSeconds);
+
+  // Embed URL with both start and end parameters when match is selected
+  const embedUrl =
+    isMatchSelected && endSeconds != null
+      ? `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0&modestbranding=1&start=${startSeconds}&end=${endSeconds}`
+      : `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0&modestbranding=1&start=${startSeconds}`;
+
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}${
     startSeconds > 0 ? `&t=${startSeconds}s` : ''
   }`;
 
   const nowPlayingTitle = selectedMatch
-    ? `${selectedMatch.description} (${formatTimestamp(startSeconds)})`
+    ? `${selectedMatch.description} (${intervalText})`
     : 'Full Tournament Broadcast Stream';
 
   const handleOpenExternal = useCallback(async () => {
@@ -109,9 +173,8 @@ export function VideoVodTab({
           styles.playerContainer,
           shadows.md,
           {
-            backgroundColor: '#090D16',
-            borderColor: colors.border,
-            borderRadius: radius.lg,
+            backgroundColor: '#000000',
+            borderRadius: radius.md,
           },
         ]}
       >
@@ -121,7 +184,7 @@ export function VideoVodTab({
             <View
               style={[
                 styles.webPlayIconCircle,
-                { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+                { backgroundColor: colors.primarySoft },
               ]}
             >
               <AppIcon name="video" size={36} color={colors.primary} />
@@ -142,7 +205,7 @@ export function VideoVodTab({
                 { color: '#94A3B8', marginTop: spacing.xs, textAlign: 'center' },
               ]}
             >
-              Start Offset: {formatTimestamp(startSeconds)} • ID: {videoId}
+              Playback Interval: {intervalText} • ID: {videoId}
             </Text>
             <Pressable
               onPress={handleOpenExternal}
@@ -150,7 +213,7 @@ export function VideoVodTab({
                 styles.webLaunchButton,
                 {
                   backgroundColor: colors.primary,
-                  borderRadius: radius.md,
+                  borderRadius: radius.sm,
                   opacity: pressed ? 0.85 : 1,
                   marginTop: spacing.md,
                 },
@@ -191,7 +254,7 @@ export function VideoVodTab({
               <View
                 style={[
                   styles.loadingOverlay,
-                  { backgroundColor: '#090D16' },
+                  { backgroundColor: '#000000' },
                 ]}
               >
                 <ActivityIndicator size="large" color={colors.primary} />
@@ -215,8 +278,7 @@ export function VideoVodTab({
           styles.telemetryBar,
           shadows.sm,
           {
-            backgroundColor: colors.card,
-            borderColor: colors.border,
+            backgroundColor: colors.surface,
             borderRadius: radius.md,
             padding: spacing.base,
             marginTop: spacing.md,
@@ -235,10 +297,10 @@ export function VideoVodTab({
               style={[
                 typography.caption,
                 styles.tabularNums,
-                { color: colors.textSecondary, marginLeft: spacing.xs, fontWeight: '600' },
+                { color: colors.textSecondary, marginLeft: spacing.xs, fontWeight: '700' },
               ]}
             >
-              {formatTimestamp(startSeconds)}
+              {intervalText}
             </Text>
           </View>
           <Text
@@ -258,8 +320,7 @@ export function VideoVodTab({
             styles.openExternalButton,
             {
               backgroundColor: colors.surfaceElevated,
-              borderColor: colors.border,
-              borderRadius: radius.md,
+              borderRadius: radius.sm,
               opacity: pressed ? 0.8 : 1,
               marginTop: spacing.sm,
             },
@@ -299,84 +360,12 @@ export function VideoVodTab({
         </Text>
       </View>
 
-      {/* Full Event Broadcast Chapter Row */}
-      <Pressable
-        onPress={() => onSelectMatch(null)}
-        style={({ pressed }) => [
-          styles.chapterRow,
-          {
-            backgroundColor: isFullBroadcastActive ? colors.primarySoft : colors.card,
-            borderColor: isFullBroadcastActive ? colors.primary : colors.border,
-            borderRadius: radius.md,
-            opacity: pressed ? 0.85 : 1,
-            marginBottom: spacing.xs,
-          },
-        ]}
-        accessibilityRole="button"
-        accessibilityLabel="Full Event Broadcast Stream, timestamp 00:00"
-        accessibilityState={{ selected: isFullBroadcastActive }}
-        hitSlop={4}
-      >
-        <View style={styles.chapterMainRow}>
-          <View
-            style={[
-              styles.timestampBadge,
-              {
-                backgroundColor: isFullBroadcastActive
-                  ? colors.primary
-                  : colors.surfaceElevated,
-                borderColor: isFullBroadcastActive
-                  ? colors.primary
-                  : colors.border,
-              },
-            ]}
-          >
-            <Text
-              style={[
-                typography.caption,
-                styles.tabularNums,
-                {
-                  color: isFullBroadcastActive ? colors.onPrimary : colors.textPrimary,
-                  fontWeight: '700',
-                },
-              ]}
-            >
-              00:00
-            </Text>
-          </View>
-
-          <View style={styles.chapterInfo}>
-            <Text
-              style={[
-                typography.headline,
-                { color: colors.textPrimary },
-              ]}
-              numberOfLines={1}
-            >
-              Full Event Broadcast
-            </Text>
-            <Text
-              style={[
-                typography.caption,
-                { color: colors.textSecondary, marginTop: 2 },
-              ]}
-            >
-              Entire tournament stream from start to finish
-            </Text>
-          </View>
-
-          {isFullBroadcastActive ? (
-            <StatusBadge variant="live" label="PLAYING" size="sm" />
-          ) : (
-            <AppIcon name="chevron-right" size={16} color={colors.textSecondary} />
-          )}
-        </View>
-      </Pressable>
-
       {/* Matches VOD Chapters */}
       {matches.map((match) => {
         const isSelected = selectedMatch?.matchId === match.matchId;
-        const matchTimestamp = match.vodTimestampSeconds ?? 300;
+        const matchStart = match.vodStartSeconds ?? match.vodTimestampSeconds ?? 300;
+        const startTimestampText = formatTimestamp(matchStart);
+
         const alliance = match.targetTeamAlliance || 'Red';
         const isRedAlliance = alliance.toLowerCase() === 'red';
 
@@ -390,22 +379,19 @@ export function VideoVodTab({
             style={({ pressed }) => [
               styles.chapterRow,
               {
-                backgroundColor: isSelected ? colors.primarySoft : colors.card,
-                borderColor: isSelected ? colors.primary : colors.border,
-                borderRadius: radius.md,
+                backgroundColor: isSelected ? colors.surfaceElevated : colors.surface,
+                borderRadius: radius.sm,
                 opacity: pressed ? 0.85 : 1,
                 marginBottom: spacing.xs,
               },
             ]}
             accessibilityRole="button"
-            accessibilityLabel={`${match.description}, timestamp ${formatTimestamp(
-              matchTimestamp
-            )}, ${alliance} alliance, score Red ${redScore} Blue ${blueScore}`}
+            accessibilityLabel={`${match.description}, timestamp ${startTimestampText}, ${alliance} alliance, score Red ${redScore} Blue ${blueScore}`}
             accessibilityState={{ selected: isSelected }}
             hitSlop={4}
           >
             <View style={styles.chapterMainRow}>
-              {/* Timestamp Badge */}
+              {/* Start Timestamp Badge */}
               <View
                 style={[
                   styles.timestampBadge,
@@ -413,9 +399,6 @@ export function VideoVodTab({
                     backgroundColor: isSelected
                       ? colors.primary
                       : colors.surfaceElevated,
-                    borderColor: isSelected
-                      ? colors.primary
-                      : colors.border,
                   },
                 ]}
               >
@@ -426,10 +409,11 @@ export function VideoVodTab({
                     {
                       color: isSelected ? colors.onPrimary : colors.textPrimary,
                       fontWeight: '700',
+                      fontSize: 11,
                     },
                   ]}
                 >
-                  {formatTimestamp(matchTimestamp)}
+                  {startTimestampText}
                 </Text>
               </View>
 
@@ -451,7 +435,7 @@ export function VideoVodTab({
                       styles.allianceBadge,
                       {
                         backgroundColor: isRedAlliance
-                          ? colors.primarySoft
+                          ? colors.destructiveSoft
                           : colors.allianceBlueSoft,
                       },
                     ]}
@@ -461,7 +445,7 @@ export function VideoVodTab({
                         typography.caption,
                         {
                           color: isRedAlliance
-                            ? colors.primary
+                            ? colors.destructive
                             : colors.allianceBlue,
                           fontWeight: '700',
                           fontSize: 10,
@@ -487,12 +471,12 @@ export function VideoVodTab({
                 </View>
               </View>
 
-              {/* Playing or Chevron indicator */}
-              {isSelected ? (
-                <StatusBadge variant="live" label="PLAYING" size="sm" />
-              ) : (
-                <AppIcon name="chevron-right" size={16} color={colors.textSecondary} />
-              )}
+              {/* Chevron indicator */}
+              <AppIcon
+                name="chevron-right"
+                size={16}
+                color={isSelected ? colors.primary : colors.textSecondary}
+              />
             </View>
           </Pressable>
         );
@@ -505,11 +489,21 @@ const styles = StyleSheet.create({
   container: {
     width: '100%',
   },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   playerContainer: {
     width: '100%',
     aspectRatio: 16 / 9,
     overflow: 'hidden',
-    borderWidth: 1,
   },
   nativePlayerViewport: {
     flex: 1,
@@ -542,7 +536,6 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
   },
   webLaunchButton: {
     flexDirection: 'row',
@@ -551,9 +544,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     minHeight: 44,
   },
-  telemetryBar: {
-    borderWidth: 1,
-  },
+  telemetryBar: {},
   telemetryHeader: {
     width: '100%',
   },
@@ -566,7 +557,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 44,
-    borderWidth: 1,
     paddingHorizontal: 16,
   },
   chaptersHeader: {
@@ -575,7 +565,6 @@ const styles = StyleSheet.create({
   },
   chapterRow: {
     minHeight: 56,
-    borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 10,
     justifyContent: 'center',
@@ -588,8 +577,7 @@ const styles = StyleSheet.create({
   timestampBadge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
+    borderRadius: 4,
     alignItems: 'center',
     justifyContent: 'center',
     minWidth: 54,
@@ -599,7 +587,7 @@ const styles = StyleSheet.create({
   },
   chapterInfo: {
     flex: 1,
-    marginLeft: 12,
+    marginLeft: 10,
     marginRight: 8,
   },
   matchTitleRow: {

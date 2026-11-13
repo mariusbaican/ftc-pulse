@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import {
   Pressable,
   StyleProp,
@@ -8,7 +8,6 @@ import {
   ViewStyle,
 } from 'react-native';
 import Animated, {
-  Easing,
   FadeInDown,
   useAnimatedStyle,
   useReducedMotion,
@@ -16,7 +15,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useAppTheme } from '@/theme';
-import type { SeasonSummaryResponse } from '@/types/api';
+import type { BestMatchPerformance, SeasonSummaryResponse } from '@/types/api';
 import { AppIcon } from '@/components/ui/icon';
 import { StatusBadge } from '@/components/ui/status-badge';
 
@@ -25,79 +24,69 @@ const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 export interface SeasonAnalyticsCardsProps {
   summary: SeasonSummaryResponse;
   onSelectEvent?: (eventCode: string) => void;
+  onSelectBestMatch?: (bestMatch: BestMatchPerformance) => void;
   style?: StyleProp<ViewStyle>;
+}
+
+function formatOrdinal(n: number): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) {
+    return `${n}th`;
+  }
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
 }
 
 /**
  * Animated High-Emphasis Season Analytics & Statistical Highlight Cards.
  * Implements:
- * 1. Global Season OPR & Period Breakdown Hero Card with proportional distribution bar
- * 2. Side-by-side Season W-L-T Record Card with animated win rate telemetry bar
- * 3. Side-by-side Best Match Performance Card with interactive touch routing
+ * 1. Global Season OPR & Period Breakdown Hero Card with World Rank pills
+ * 2. Full-width Season W-L-T Record Card with clean compact layout
+ * 3. Full-width Season High Score (NP) Card with interactive event touch routing
  *
  * Adheres strictly to ui-ux-pro-max guidelines, expo-animation, expo-native-ui, and WCAG 2.1 AA accessibility.
  */
 export function SeasonAnalyticsCards({
   summary,
   onSelectEvent,
+  onSelectBestMatch,
   style,
 }: SeasonAnalyticsCardsProps) {
   const { colors, typography, spacing, radius, shadows } = useAppTheme();
   const reducedMotion = useReducedMotion();
 
-  // Shared values for proportional telemetry bars
-  const distributionProgress = useSharedValue(reducedMotion ? 1 : 0);
-  const winRateProgress = useSharedValue(reducedMotion ? 1 : 0);
   const bestMatchScale = useSharedValue(1);
 
   // Normalize win rate percentage (handles both 0..1 and 0..100)
   const rawWinRate = summary.record?.winRate ?? 0;
   const winRatePct = rawWinRate > 0 && rawWinRate <= 1 ? rawWinRate * 100 : rawWinRate;
 
-  // Calculate component distribution ratios for OPR breakdown
-  const autoOpr = Math.max(0, summary.globalOpr?.autoOpr ?? 0);
-  const teleopOpr = Math.max(0, summary.globalOpr?.teleopOpr ?? 0);
-  const endgameOpr = Math.max(0, summary.globalOpr?.endgameOpr ?? 0);
-  const totalComponentOpr = autoOpr + teleopOpr + endgameOpr;
-  const safeSum = totalComponentOpr > 0 ? totalComponentOpr : 1;
+  // World ranks with '1st' fallback
+  const isBelowFifty = winRatePct < 50;
+  const totalWorldRank = summary.worldRanks?.total
+    ? formatOrdinal(summary.worldRanks.total)
+    : '1st';
+  const autoWorldRank = summary.worldRanks?.auto
+    ? formatOrdinal(summary.worldRanks.auto)
+    : '1st';
+  const teleopWorldRank = summary.worldRanks?.teleop
+    ? formatOrdinal(summary.worldRanks.teleop)
+    : '1st';
+  const endgameWorldRank = summary.worldRanks?.endgame
+    ? formatOrdinal(summary.worldRanks.endgame)
+    : '1st';
 
-  const autoRatio = autoOpr / safeSum;
-  const teleopRatio = teleopOpr / safeSum;
-  const endgameRatio = endgameOpr / safeSum;
-
-  const autoFlex = Math.max(1, Math.round(autoRatio * 100));
-  const teleopFlex = Math.max(1, Math.round(teleopRatio * 100));
-  const endgameFlex = Math.max(1, Math.round(endgameRatio * 100));
-
-  useEffect(() => {
-    if (!reducedMotion) {
-      distributionProgress.value = withTiming(1, {
-        duration: 650,
-        easing: Easing.out(Easing.cubic),
-      });
-      winRateProgress.value = withTiming(1, {
-        duration: 700,
-        easing: Easing.out(Easing.cubic),
-      });
-    } else {
-      distributionProgress.value = 1;
-      winRateProgress.value = 1;
-    }
-  }, [reducedMotion, distributionProgress, winRateProgress]);
-
-  // Animated styles for bar fills
-  const animatedDistributionBarStyle = useAnimatedStyle(() => {
-    return {
-      width: `${Math.min(100, Math.max(0, distributionProgress.value * 100))}%`,
-    };
-  });
-
-  const animatedWinRateBarStyle = useAnimatedStyle(() => {
-    const clampedPct = Math.min(100, Math.max(0, winRatePct));
-    return {
-      width: `${clampedPct * winRateProgress.value}%`,
-    };
-  });
+  const bestScore = summary.bestMatch
+    ? (summary.bestMatch.nonFoulScore ?? summary.bestMatch.score ?? 0)
+    : 0;
 
   const animatedBestMatchPressStyle = useAnimatedStyle(() => {
     return {
@@ -106,7 +95,7 @@ export function SeasonAnalyticsCards({
   });
 
   const handleBestMatchPressIn = () => {
-    if (summary.bestMatch && onSelectEvent) {
+    if (summary.bestMatch && (onSelectBestMatch || onSelectEvent)) {
       bestMatchScale.value = withTiming(0.98, { duration: 100 });
     }
   };
@@ -116,12 +105,18 @@ export function SeasonAnalyticsCards({
   };
 
   const handleBestMatchPress = () => {
-    if (summary.bestMatch && onSelectEvent) {
-      onSelectEvent(summary.bestMatch.eventCode);
+    if (summary.bestMatch) {
+      if (onSelectBestMatch) {
+        onSelectBestMatch(summary.bestMatch);
+      } else if (onSelectEvent) {
+        onSelectEvent(summary.bestMatch.eventCode);
+      }
     }
   };
 
-  const seasonYear = summary.season || 2025;
+  const surfaceBg = colors.surface || '#15150B';
+  const surfaceElevatedBg = colors.surfaceElevated || '#1F1F10';
+  const yellowPrimary = colors.primary || '#FFFF00';
 
   return (
     <View style={[styles.rootContainer, { gap: spacing.md }, style]}>
@@ -131,32 +126,31 @@ export function SeasonAnalyticsCards({
       <Animated.View
         entering={reducedMotion ? undefined : FadeInDown.duration(260)}
         style={[
-          styles.heroCard,
+          styles.statCard,
           shadows.md,
           {
-            backgroundColor: colors.card,
-            borderColor: colors.border,
-            borderRadius: radius.lg,
+            backgroundColor: surfaceBg,
+            borderRadius: radius.md,
             padding: spacing.base,
           },
         ]}
         accessible
         accessibilityRole="summary"
-        accessibilityLabel={`Global Season OPR: ${summary.globalOpr?.totalOpr?.toFixed(2) ?? '0.00'}`}
+        accessibilityLabel={`Season OPR NP: ${summary.globalOpr?.totalOpr?.toFixed(2) ?? '0.00'}, World Rank: ${totalWorldRank}`}
       >
-        {/* Header Row: Bolt Icon + Label + Best Event Peak OPR Pill */}
-        <View style={styles.headerRow}>
+        {/* Header Row: Bolt Icon + Label + World Rank Badge */}
+        <View style={styles.cardHeaderBetween}>
           <View style={styles.headerTitleGroup}>
             <View
               style={[
                 styles.iconBadge,
                 {
-                  backgroundColor: colors.primarySoft,
+                  backgroundColor: surfaceElevatedBg,
                   borderRadius: radius.sm,
                 },
               ]}
             >
-              <AppIcon name="bolt" size={16} color={colors.primary} />
+              <AppIcon name="bolt" size={16} color={yellowPrimary} />
             </View>
             <Text
               style={[
@@ -165,94 +159,28 @@ export function SeasonAnalyticsCards({
                 { color: colors.textSecondary },
               ]}
             >
-              GLOBAL SEASON OPR
+              SEASON OPR (NP)
             </Text>
           </View>
 
-          {summary.bestEvent ? (
-            <StatusBadge
-              variant="gold"
-              label={`Peak OPR: ${summary.bestEvent.totalOpr.toFixed(1)}`}
-              size="sm"
-            />
-          ) : (
-            <StatusBadge
-              variant="neutral"
-              label={`${seasonYear} Season`}
-              size="sm"
-            />
-          )}
+          <StatusBadge
+            variant="gold"
+            label={`World Rank: ${totalWorldRank}`}
+            size="sm"
+          />
         </View>
 
-        {/* Main Metric Value & Subtitle */}
-        <View style={[styles.metricSection, { marginTop: spacing.sm }]}>
+        {/* Main Metric Value */}
+        <View style={[styles.metricSection, { marginTop: spacing.xs }]}>
           <Text
             style={[
-              typography.hero,
+              typography.largeTitle,
               styles.oprValueText,
               { color: colors.textPrimary },
             ]}
           >
             {summary.globalOpr?.totalOpr?.toFixed(2) ?? '0.00'}
           </Text>
-          <Text
-            style={[
-              typography.caption,
-              styles.oprSubtitle,
-              { color: colors.textMuted },
-            ]}
-          >
-            Offensive Power Rating (Ridge OLS across {seasonYear} season)
-          </Text>
-        </View>
-
-        {/* Animated Proportional Period Distribution Bar */}
-        <View style={[styles.barContainer, { marginTop: spacing.md }]}>
-          <View
-            style={[
-              styles.barTrack,
-              {
-                backgroundColor: colors.surfaceElevated,
-                borderRadius: radius.full,
-              },
-            ]}
-          >
-            <Animated.View
-              style={[
-                styles.barSegmentsContainer,
-                { borderRadius: radius.full },
-                animatedDistributionBarStyle,
-              ]}
-            >
-              <View
-                style={[
-                  styles.barSegment,
-                  {
-                    flex: autoFlex,
-                    backgroundColor: colors.allianceBlue,
-                  },
-                ]}
-              />
-              <View
-                style={[
-                  styles.barSegment,
-                  {
-                    flex: teleopFlex,
-                    backgroundColor: colors.primary,
-                  },
-                ]}
-              />
-              <View
-                style={[
-                  styles.barSegment,
-                  {
-                    flex: endgameFlex,
-                    backgroundColor: colors.accentGold,
-                  },
-                ]}
-              />
-            </Animated.View>
-          </View>
         </View>
 
         {/* 3-Column Period Telemetry Split */}
@@ -260,9 +188,8 @@ export function SeasonAnalyticsCards({
           style={[
             styles.telemetryColumnsRow,
             {
-              borderTopColor: colors.borderSubtle,
-              marginTop: spacing.md,
-              paddingTop: spacing.md,
+              marginTop: spacing.sm,
+              paddingTop: spacing.xs,
             },
           ]}
         >
@@ -270,45 +197,37 @@ export function SeasonAnalyticsCards({
           <View
             style={styles.periodCol}
             accessible
-            accessibilityLabel={`Autonomous: Auto OPR ${summary.globalOpr?.autoOpr?.toFixed(1) ?? '0.0'}, average ${summary.periodAverages?.autoAvg?.toFixed(1) ?? '0.0'} points`}
+            accessibilityLabel={`Auto OPR: ${summary.globalOpr?.autoOpr?.toFixed(1) ?? '0.0'}, World Rank ${autoWorldRank}`}
           >
-            <View style={styles.periodColHeader}>
-              <View
-                style={[
-                  styles.periodIndicatorDot,
-                  { backgroundColor: colors.allianceBlue },
-                ]}
-              />
-              <Text
-                style={[
-                  typography.caption,
-                  styles.periodNameText,
-                  { color: colors.textSecondary },
-                ]}
-                numberOfLines={1}
-              >
-                Autonomous
-              </Text>
-            </View>
+            <Text
+              style={[
+                typography.caption,
+                styles.periodNameText,
+                { color: colors.textSecondary },
+              ]}
+              numberOfLines={1}
+            >
+              Auto OPR
+            </Text>
             <Text
               style={[
                 typography.tabularNumber,
                 styles.periodOprValue,
-                { color: colors.allianceBlue },
+                { color: colors.textPrimary },
               ]}
               numberOfLines={1}
             >
-              Auto OPR: {summary.globalOpr?.autoOpr?.toFixed(1) ?? '0.0'}
+              {summary.globalOpr?.autoOpr?.toFixed(1) ?? '0.0'}
             </Text>
             <Text
               style={[
                 typography.caption,
-                styles.periodAvgValue,
+                styles.periodRankValue,
                 { color: colors.textMuted },
               ]}
               numberOfLines={1}
             >
-              Avg: {summary.periodAverages?.autoAvg?.toFixed(1) ?? '0.0'} pts
+              World Rank: {autoWorldRank}
             </Text>
           </View>
 
@@ -316,7 +235,7 @@ export function SeasonAnalyticsCards({
           <View
             style={[
               styles.columnDivider,
-              { backgroundColor: colors.borderSubtle },
+              { backgroundColor: surfaceElevatedBg },
             ]}
           />
 
@@ -324,45 +243,37 @@ export function SeasonAnalyticsCards({
           <View
             style={styles.periodCol}
             accessible
-            accessibilityLabel={`Driver TeleOp: TeleOp OPR ${summary.globalOpr?.teleopOpr?.toFixed(1) ?? '0.0'}, average ${summary.periodAverages?.teleopAvg?.toFixed(1) ?? '0.0'} points`}
+            accessibilityLabel={`TeleOp OPR: ${summary.globalOpr?.teleopOpr?.toFixed(1) ?? '0.0'}, World Rank ${teleopWorldRank}`}
           >
-            <View style={styles.periodColHeader}>
-              <View
-                style={[
-                  styles.periodIndicatorDot,
-                  { backgroundColor: colors.primary },
-                ]}
-              />
-              <Text
-                style={[
-                  typography.caption,
-                  styles.periodNameText,
-                  { color: colors.textSecondary },
-                ]}
-                numberOfLines={1}
-              >
-                Driver TeleOp
-              </Text>
-            </View>
+            <Text
+              style={[
+                typography.caption,
+                styles.periodNameText,
+                { color: colors.textSecondary },
+              ]}
+              numberOfLines={1}
+            >
+              TeleOp OPR
+            </Text>
             <Text
               style={[
                 typography.tabularNumber,
                 styles.periodOprValue,
-                { color: colors.primary },
+                { color: colors.textPrimary },
               ]}
               numberOfLines={1}
             >
-              TeleOp OPR: {summary.globalOpr?.teleopOpr?.toFixed(1) ?? '0.0'}
+              {summary.globalOpr?.teleopOpr?.toFixed(1) ?? '0.0'}
             </Text>
             <Text
               style={[
                 typography.caption,
-                styles.periodAvgValue,
+                styles.periodRankValue,
                 { color: colors.textMuted },
               ]}
               numberOfLines={1}
             >
-              Avg: {summary.periodAverages?.teleopAvg?.toFixed(1) ?? '0.0'} pts
+              World Rank: {teleopWorldRank}
             </Text>
           </View>
 
@@ -370,7 +281,7 @@ export function SeasonAnalyticsCards({
           <View
             style={[
               styles.columnDivider,
-              { backgroundColor: colors.borderSubtle },
+              { backgroundColor: surfaceElevatedBg },
             ]}
           />
 
@@ -378,105 +289,99 @@ export function SeasonAnalyticsCards({
           <View
             style={styles.periodCol}
             accessible
-            accessibilityLabel={`Endgame: Endgame OPR ${summary.globalOpr?.endgameOpr?.toFixed(1) ?? '0.0'}, average ${summary.periodAverages?.endgameAvg?.toFixed(1) ?? '0.0'} points`}
+            accessibilityLabel={`Endgame OPR: ${summary.globalOpr?.endgameOpr?.toFixed(1) ?? '0.0'}, World Rank ${endgameWorldRank}`}
           >
-            <View style={styles.periodColHeader}>
-              <View
-                style={[
-                  styles.periodIndicatorDot,
-                  { backgroundColor: colors.accentGold },
-                ]}
-              />
-              <Text
-                style={[
-                  typography.caption,
-                  styles.periodNameText,
-                  { color: colors.textSecondary },
-                ]}
-                numberOfLines={1}
-              >
-                Endgame
-              </Text>
-            </View>
+            <Text
+              style={[
+                typography.caption,
+                styles.periodNameText,
+                { color: colors.textSecondary },
+              ]}
+              numberOfLines={1}
+            >
+              Endgame OPR
+            </Text>
             <Text
               style={[
                 typography.tabularNumber,
                 styles.periodOprValue,
-                { color: colors.accentGold },
+                { color: colors.textPrimary },
               ]}
               numberOfLines={1}
             >
-              Endgame OPR: {summary.globalOpr?.endgameOpr?.toFixed(1) ?? '0.0'}
+              {summary.globalOpr?.endgameOpr?.toFixed(1) ?? '0.0'}
             </Text>
             <Text
               style={[
                 typography.caption,
-                styles.periodAvgValue,
+                styles.periodRankValue,
                 { color: colors.textMuted },
               ]}
               numberOfLines={1}
             >
-              Avg: {summary.periodAverages?.endgameAvg?.toFixed(1) ?? '0.0'} pts
+              World Rank: {endgameWorldRank}
             </Text>
           </View>
         </View>
       </Animated.View>
 
       {/* ─────────────────────────────────────────────────────────────
-          ROW OF 2 SIDE-BY-SIDE CARDS (Record & Best Match Performance)
+          CARD 2: Season W-L-T Record Card (Full Width Vertical Stack)
          ───────────────────────────────────────────────────────────── */}
-      <View style={[styles.sideBySideRow, { gap: spacing.md }]}>
-        {/* CARD 2A: Season W-L-T Record Card */}
-        <Animated.View
-          entering={
-            reducedMotion ? undefined : FadeInDown.delay(70).duration(260)
-          }
-          style={[
-            styles.sideCard,
-            shadows.sm,
-            {
-              backgroundColor: colors.card,
-              borderColor: colors.border,
-              borderRadius: radius.lg,
-              padding: spacing.base,
-            },
-          ]}
-          accessible
-          accessibilityRole="summary"
-          accessibilityLabel={`Season Record: ${summary.record?.wins ?? 0} wins, ${summary.record?.losses ?? 0} losses, ${summary.record?.ties ?? 0} ties, ${winRatePct.toFixed(1)} percent win rate`}
-        >
-          {/* Header Row: Shield Icon + Label */}
-          <View style={styles.sideCardHeader}>
-            <View style={styles.headerTitleGroup}>
-              <View
-                style={[
-                  styles.iconBadgeSmall,
-                  {
-                    backgroundColor: colors.statusLiveSoft,
-                    borderRadius: radius.sm,
-                  },
-                ]}
-              >
-                <AppIcon name="shield" size={14} color={colors.statusLive} />
-              </View>
-              <Text
-                style={[
-                  typography.caption,
-                  styles.sideCardLabel,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                SEASON RECORD
-              </Text>
+      <Animated.View
+        entering={
+          reducedMotion ? undefined : FadeInDown.delay(70).duration(260)
+        }
+        style={[
+          styles.statCard,
+          shadows.sm,
+          {
+            backgroundColor: surfaceBg,
+            borderRadius: radius.md,
+            padding: spacing.base,
+          },
+        ]}
+        accessible
+        accessibilityRole="summary"
+        accessibilityLabel={`Season Record: ${summary.record?.wins ?? 0} wins, ${summary.record?.losses ?? 0} losses, ${summary.record?.ties ?? 0} ties, ${winRatePct.toFixed(1)} percent win rate, ${summary.record?.matchesPlayed ?? 0} matches played`}
+      >
+        <View style={styles.cardHeaderBetween}>
+          <View style={styles.headerTitleGroup}>
+            <View
+              style={[
+                styles.iconBadgeSmall,
+                {
+                  backgroundColor: surfaceElevatedBg,
+                  borderRadius: radius.sm,
+                },
+              ]}
+            >
+              <AppIcon name="shield" size={14} color={yellowPrimary} />
             </View>
+            <Text
+              style={[
+                typography.caption,
+                styles.cardHeaderLabel,
+                { color: colors.textSecondary },
+              ]}
+            >
+              SEASON RECORD
+            </Text>
           </View>
 
-          {/* Large Tabular Record */}
+          <StatusBadge
+            variant={isBelowFifty ? 'red' : 'live'}
+            label={`${winRatePct.toFixed(1)}% Win Rate`}
+            size="sm"
+          />
+        </View>
+
+        <View style={[styles.recordContentRow, { marginTop: spacing.sm }]}>
           <Text
             style={[
               typography.largeTitle,
               styles.recordScoreText,
-              { color: colors.textPrimary, marginTop: spacing.xs },
+              { color: colors.textPrimary },
             ]}
           >
             {summary.record
@@ -484,169 +389,141 @@ export function SeasonAnalyticsCards({
               : '0-0-0'}
           </Text>
 
-          {/* Win Rate Badge */}
-          <View style={{ marginTop: spacing.xs }}>
-            <StatusBadge
-              variant="live"
-              label={`${winRatePct.toFixed(1)}% Win Rate`}
-              size="sm"
-            />
-          </View>
-
-          {/* Animated Horizontal Win-Rate Bar */}
-          <View
-            style={[
-              styles.miniBarTrack,
-              {
-                backgroundColor: colors.surfaceElevated,
-                borderRadius: radius.full,
-                marginTop: spacing.sm,
-              },
-            ]}
-          >
-            <Animated.View
-              style={[
-                styles.miniBarFill,
-                {
-                  backgroundColor: colors.statusLive,
-                  borderRadius: radius.full,
-                },
-                animatedWinRateBarStyle,
-              ]}
-            />
-          </View>
-
-          {/* Subtitle Matches Played */}
           <Text
             style={[
-              typography.caption,
-              styles.sideCardSubtitle,
-              { color: colors.textMuted, marginTop: spacing.xs },
+              typography.subhead,
+              styles.matchesPlayedText,
+              { color: colors.textMuted },
             ]}
             numberOfLines={1}
           >
-            {summary.record?.matchesPlayed ?? 0} Official Matches Played
+            {summary.record?.matchesPlayed ?? 0} Matches Played
           </Text>
-        </Animated.View>
+        </View>
+      </Animated.View>
 
-        {/* CARD 2B: Best Match Performance Highlight Card */}
-        <AnimatedPressable
-          entering={
-            reducedMotion ? undefined : FadeInDown.delay(140).duration(260)
-          }
-          onPress={handleBestMatchPress}
-          onPressIn={handleBestMatchPressIn}
-          onPressOut={handleBestMatchPressOut}
-          disabled={!summary.bestMatch || !onSelectEvent}
-          accessible
-          accessibilityRole="button"
-          accessibilityLabel={
-            summary.bestMatch
-              ? `Season High Score: ${summary.bestMatch.score} points, ${summary.bestMatch.matchDescription} at ${summary.bestMatch.eventName}`
-              : 'Season High Score: No official matches recorded'
-          }
-          accessibilityHint={
-            summary.bestMatch && onSelectEvent
-              ? `Jumps to tournament event ${summary.bestMatch.eventName}`
-              : undefined
-          }
-          style={[
-            styles.sideCard,
-            shadows.sm,
-            {
-              backgroundColor: colors.card,
-              borderColor: colors.border,
-              borderRadius: radius.lg,
-              padding: spacing.base,
-            },
-            animatedBestMatchPressStyle,
-          ]}
-        >
-          {/* Header Row: Trophy Icon + Label + Arrow */}
-          <View style={styles.sideCardHeaderBetween}>
-            <View style={styles.headerTitleGroup}>
-              <View
-                style={[
-                  styles.iconBadgeSmall,
-                  {
-                    backgroundColor: colors.accentGoldSoft,
-                    borderRadius: radius.sm,
-                  },
-                ]}
-              >
-                <AppIcon name="trophy" size={14} color={colors.accentGold} />
-              </View>
-              <Text
-                style={[
-                  typography.caption,
-                  styles.sideCardLabel,
-                  { color: colors.textSecondary },
-                ]}
-              >
-                SEASON HIGH SCORE
-              </Text>
-            </View>
-
-            {summary.bestMatch && onSelectEvent ? (
-              <AppIcon
-                name="arrow-up-right"
-                size={14}
-                color={colors.accentGold}
-              />
-            ) : null}
-          </View>
-
-          {/* Large Tabular Score */}
-          <Text
-            style={[
-              typography.largeTitle,
-              styles.recordScoreText,
-              { color: colors.accentGold, marginTop: spacing.xs },
-            ]}
-          >
-            {summary.bestMatch?.score ?? 0}{' '}
-            <Text
+      {/* ─────────────────────────────────────────────────────────────
+          CARD 3: Season High Score (NP) Card (Full Width Vertical Stack)
+         ───────────────────────────────────────────────────────────── */}
+      <AnimatedPressable
+        entering={
+          reducedMotion ? undefined : FadeInDown.delay(140).duration(260)
+        }
+        onPress={handleBestMatchPress}
+        onPressIn={handleBestMatchPressIn}
+        onPressOut={handleBestMatchPressOut}
+        disabled={!summary.bestMatch || (!onSelectBestMatch && !onSelectEvent)}
+        accessible
+        accessibilityRole="button"
+        accessibilityLabel={
+          summary.bestMatch
+            ? `Season High Score NP: ${bestScore} points, ${summary.bestMatch.matchDescription} at ${summary.bestMatch.eventName}`
+            : 'Season High Score NP: No official matches recorded'
+        }
+        accessibilityHint={
+          summary.bestMatch && (onSelectBestMatch || onSelectEvent)
+            ? onSelectBestMatch
+              ? `Jumps to match ${summary.bestMatch.matchDescription} in ${summary.bestMatch.eventName}`
+              : `Jumps to tournament event ${summary.bestMatch.eventName}`
+            : undefined
+        }
+        style={[
+          styles.statCard,
+          shadows.sm,
+          {
+            backgroundColor: surfaceBg,
+            borderRadius: radius.md,
+            padding: spacing.base,
+          },
+          animatedBestMatchPressStyle,
+        ]}
+      >
+        <View style={styles.cardHeaderBetween}>
+          <View style={styles.headerTitleGroup}>
+            <View
               style={[
-                typography.headline,
-                { color: colors.accentGold, fontWeight: '700' },
+                styles.iconBadgeSmall,
+                {
+                  backgroundColor: surfaceElevatedBg,
+                  borderRadius: radius.sm,
+                },
               ]}
             >
-              PTS
-            </Text>
-          </Text>
-
-          {/* Subtitle Match Description & Alliance */}
-          <Text
-            style={[
-              typography.caption,
-              styles.matchDescText,
-              { color: colors.textSecondary, marginTop: spacing.xs },
-            ]}
-            numberOfLines={1}
-          >
-            {summary.bestMatch
-              ? `${summary.bestMatch.matchDescription} • ${summary.bestMatch.alliance} Alliance`
-              : 'No matches played yet'}
-          </Text>
-
-          {/* Tournament Name with Link Icon */}
-          <View style={[styles.tournamentLinkRow, { marginTop: spacing.xs }]}>
+              <AppIcon name="trophy" size={14} color={yellowPrimary} />
+            </View>
             <Text
               style={[
                 typography.caption,
-                styles.tournamentNameText,
-                { color: colors.textMuted },
+                styles.cardHeaderLabel,
+                { color: colors.textSecondary },
               ]}
-              numberOfLines={1}
             >
-              {summary.bestMatch?.eventName || 'Official Tournament'}
+              SEASON HIGH SCORE (NP)
             </Text>
-            {summary.bestMatch ? (
-              <AppIcon name="arrow-up-right" size={12} color={colors.textMuted} />
-            ) : null}
           </View>
-        </AnimatedPressable>
-      </View>
+
+          {summary.bestMatch && (onSelectBestMatch || onSelectEvent) ? (
+            <AppIcon
+              name="arrow-up-right"
+              size={14}
+              color={yellowPrimary}
+            />
+          ) : null}
+        </View>
+
+        <View style={[styles.highScoreContentRow, { marginTop: spacing.sm }]}>
+          <View style={styles.highScoreLeftCol}>
+            <Text
+              style={[
+                typography.largeTitle,
+                styles.recordScoreText,
+                { color: colors.textPrimary },
+              ]}
+            >
+              {bestScore}{' '}
+              <Text
+                style={[
+                  typography.headline,
+                  { color: colors.textPrimary, fontWeight: '700' },
+                ]}
+              >
+                pts
+              </Text>
+            </Text>
+          </View>
+
+          <View style={styles.highScoreRightCol}>
+            <View style={styles.matchMetaRow}>
+              <Text
+                style={[
+                  typography.subhead,
+                  styles.matchDescText,
+                  { color: colors.textPrimary },
+                ]}
+                numberOfLines={1}
+              >
+                {summary.bestMatch?.matchDescription || 'Match'}
+              </Text>
+            </View>
+
+            <View style={styles.tournamentLinkRow}>
+              <Text
+                style={[
+                  typography.caption,
+                  styles.tournamentNameText,
+                  { color: colors.textMuted },
+                ]}
+                numberOfLines={1}
+              >
+                {summary.bestMatch?.eventName || 'Official Tournament'}
+              </Text>
+              {summary.bestMatch ? (
+                <AppIcon name="arrow-up-right" size={11} color={colors.textMuted} />
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </AnimatedPressable>
     </View>
   );
 }
@@ -655,12 +532,12 @@ const styles = StyleSheet.create({
   rootContainer: {
     width: '100%',
   },
-  heroCard: {
-    borderWidth: 1,
+  statCard: {
+    borderWidth: 0,
     borderCurve: 'continuous',
     width: '100%',
   },
-  headerRow: {
+  cardHeaderBetween: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -696,52 +573,21 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   oprValueText: {
-    fontSize: 38,
-    lineHeight: 44,
+    fontSize: 26,
+    lineHeight: 30,
     fontWeight: '800',
-    letterSpacing: -0.8,
+    letterSpacing: -0.5,
     fontVariant: ['tabular-nums'],
-  },
-  oprSubtitle: {
-    fontSize: 12,
-    lineHeight: 16,
-  },
-  barContainer: {
-    width: '100%',
-  },
-  barTrack: {
-    height: 10,
-    width: '100%',
-    overflow: 'hidden',
-  },
-  barSegmentsContainer: {
-    height: '100%',
-    flexDirection: 'row',
-    overflow: 'hidden',
-    gap: 1.5,
-  },
-  barSegment: {
-    height: '100%',
   },
   telemetryColumnsRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: 0,
   },
   periodCol: {
     flex: 1,
-    gap: 3,
-  },
-  periodColHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-  },
-  periodIndicatorDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    gap: 2,
   },
   periodNameText: {
     fontSize: 11,
@@ -750,48 +596,28 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
   },
   periodOprValue: {
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 16,
+    lineHeight: 20,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
-  periodAvgValue: {
+  periodRankValue: {
     fontSize: 11,
     lineHeight: 14,
     fontVariant: ['tabular-nums'],
+    fontWeight: '600',
   },
   columnDivider: {
-    width: StyleSheet.hairlineWidth,
+    width: 1,
     height: '80%',
     marginHorizontal: 8,
     alignSelf: 'center',
   },
-  sideBySideRow: {
+  recordContentRow: {
     flexDirection: 'row',
-    alignItems: 'stretch',
-    width: '100%',
-  },
-  sideCard: {
-    flex: 1,
-    borderWidth: 1,
-    borderCurve: 'continuous',
+    alignItems: 'baseline',
     justifyContent: 'space-between',
-    minHeight: 148,
-  },
-  sideCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  sideCardHeaderBetween: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  sideCardLabel: {
-    fontWeight: '700',
-    letterSpacing: 0.4,
-    fontSize: 11,
-    lineHeight: 15,
+    gap: 12,
   },
   recordScoreText: {
     fontSize: 26,
@@ -800,17 +626,30 @@ const styles = StyleSheet.create({
     letterSpacing: -0.4,
     fontVariant: ['tabular-nums'],
   },
-  miniBarTrack: {
-    height: 6,
-    width: '100%',
-    overflow: 'hidden',
+  matchesPlayedText: {
+    fontSize: 13,
+    fontWeight: '500',
   },
-  miniBarFill: {
-    height: '100%',
+  highScoreContentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 12,
   },
-  sideCardSubtitle: {
-    fontSize: 11,
-    lineHeight: 15,
+  highScoreLeftCol: {
+    justifyContent: 'center',
+  },
+  highScoreRightCol: {
+    flex: 1,
+    minWidth: 160,
+    alignItems: 'flex-end',
+    gap: 3,
+  },
+  matchMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   matchDescText: {
     fontSize: 12,
@@ -825,6 +664,6 @@ const styles = StyleSheet.create({
   tournamentNameText: {
     fontSize: 11,
     lineHeight: 15,
-    flex: 1,
+    textAlign: 'right',
   },
 });

@@ -28,8 +28,8 @@ export interface BrickBotTeamCardProps {
 
 /**
  * High-emphasis Sports Telemetry Team Card for Team #15996 BrickBot and search results.
- * Features 60fps UI-thread spring/timing interaction, high-contrast badges, continuous corner curves,
- * and WCAG 2.1 AA accessible touch targets.
+ * Features 60fps UI-thread spring/timing interaction, signature yellow & warm-black borderless aesthetic,
+ * high-contrast electric yellow badges with dark text, and WCAG 2.1 AA accessible touch targets.
  */
 export function BrickBotTeamCard({
   team,
@@ -70,9 +70,8 @@ export function BrickBotTeamCard({
         styles.cardContainer,
         shadows.md,
         {
-          backgroundColor: colors.card,
-          borderColor: colors.border,
-          borderRadius: radius.lg,
+          backgroundColor: colors.surface,
+          borderRadius: radius.md,
         },
         animatedPressStyle,
         style,
@@ -87,7 +86,7 @@ export function BrickBotTeamCard({
               styles.numberBadge,
               {
                 backgroundColor: colors.primary,
-                borderRadius: radius.sm,
+                borderRadius: radius.md,
               },
             ]}
           >
@@ -166,9 +165,8 @@ export function BrickBotTeamCard({
         style={[
           styles.footerBar,
           {
-            borderTopColor: colors.borderSubtle,
             marginTop: spacing.md,
-            paddingTop: spacing.md,
+            paddingTop: spacing.xs,
           },
         ]}
       >
@@ -182,16 +180,17 @@ export function BrickBotTeamCard({
           View {team.season} Season Analytics, OPR & Live Schedule
         </Text>
 
+        {/* Action Button: electric yellow fill, dark icon, small sharp radius, zero borders */}
         <View
           style={[
-            styles.footerChevronCircle,
+            styles.footerActionButton,
             {
-              backgroundColor: colors.primarySoft,
-              borderRadius: radius.full,
+              backgroundColor: colors.primary,
+              borderRadius: radius.md,
             },
           ]}
         >
-          <AppIcon name="chevron-right" size={14} color={colors.primary} />
+          <AppIcon name="chevron-right" size={14} color={colors.onPrimary} />
         </View>
       </View>
     </AnimatedPressable>
@@ -201,7 +200,7 @@ export function BrickBotTeamCard({
 const styles = StyleSheet.create({
   cardContainer: {
     padding: 16,
-    borderWidth: 1,
+    borderWidth: 0,
     borderCurve: 'continuous',
     minHeight: 140,
   },
@@ -221,6 +220,7 @@ const styles = StyleSheet.create({
   numberBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
+    borderWidth: 0,
     borderCurve: 'continuous',
     alignItems: 'center',
     justifyContent: 'center',
@@ -258,7 +258,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderTopWidth: 1,
+    borderTopWidth: 0,
     minHeight: 48,
   },
   footerActionText: {
@@ -268,12 +268,13 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 8,
   },
-  footerChevronCircle: {
-    width: 28,
-    height: 28,
+  footerActionButton: {
+    width: 32,
+    height: 32,
     alignItems: 'center',
     justifyContent: 'center',
     flexShrink: 0,
+    borderWidth: 0,
     borderCurve: 'continuous',
   },
 });

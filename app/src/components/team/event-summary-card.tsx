@@ -21,7 +21,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
-const MONTH_NAMES = [
+const FULL_MONTH_NAMES = [
   'Jan',
   'Feb',
   'Mar',
@@ -35,6 +35,23 @@ const MONTH_NAMES = [
   'Nov',
   'Dec',
 ] as const;
+
+function getDayOrdinal(day: number): string {
+  const mod100 = day % 100;
+  if (mod100 >= 11 && mod100 <= 13) {
+    return `${day}th`;
+  }
+  switch (day % 10) {
+    case 1:
+      return `${day}st`;
+    case 2:
+      return `${day}nd`;
+    case 3:
+      return `${day}rd`;
+    default:
+      return `${day}th`;
+  }
+}
 
 /**
  * Parses YYYY-MM-DD components directly to prevent timezone-related date shifts.
@@ -54,10 +71,11 @@ function parseDateComponents(
 
 /**
  * Formats tournament date ranges cleanly without timezone discrepancies.
+ * Format: MonthName DayOrdinal - MonthName DayOrdinal, Year (no time)
  * Examples:
- * - "2026-04-29", "2026-05-02" -> "Apr 29 – May 2, 2026"
- * - "2026-02-21", "2026-02-22" -> "Feb 21–22, 2026"
- * - "2025-12-13", "2025-12-13" -> "Dec 13, 2025"
+ * - "2026-04-28", "2026-05-02" -> "April 28th - May 2nd, 2026"
+ * - "2026-02-21", "2026-02-22" -> "February 21st - February 22nd, 2026"
+ * - "2025-12-13", "2025-12-13" -> "December 13th, 2025"
  */
 export function formatEventDateRange(
   dateStartStr?: string,
@@ -67,34 +85,35 @@ export function formatEventDateRange(
   const start = parseDateComponents(dateStartStr);
   if (!start) return dateStartStr;
 
-  const startMonthName = MONTH_NAMES[start.month] ?? '';
-  const startDay = start.day;
+  const startMonthName = FULL_MONTH_NAMES[start.month] ?? '';
+  const startDayOrdinal = getDayOrdinal(start.day);
   const startYear = start.year;
 
   if (!dateEndStr) {
-    return `${startMonthName} ${startDay}, ${startYear}`;
+    return `${startMonthName} ${startDayOrdinal}, ${startYear}`;
   }
 
   const end = parseDateComponents(dateEndStr);
   if (!end) {
-    return `${startMonthName} ${startDay}, ${startYear}`;
+    return `${startMonthName} ${startDayOrdinal}, ${startYear}`;
   }
 
-  const endMonthName = MONTH_NAMES[end.month] ?? '';
-  const endDay = end.day;
+  const endMonthName = FULL_MONTH_NAMES[end.month] ?? '';
+  const endDayOrdinal = getDayOrdinal(end.day);
   const endYear = end.year;
 
-  if (startYear === endYear) {
-    if (start.month === end.month) {
-      if (startDay === endDay) {
-        return `${startMonthName} ${startDay}, ${startYear}`;
-      }
-      return `${startMonthName} ${startDay}–${endDay}, ${startYear}`;
-    }
-    return `${startMonthName} ${startDay} – ${endMonthName} ${endDay}, ${startYear}`;
+  // Same day
+  if (startYear === endYear && start.month === end.month && start.day === end.day) {
+    return `${startMonthName} ${startDayOrdinal}, ${startYear}`;
   }
 
-  return `${startMonthName} ${startDay}, ${startYear} – ${endMonthName} ${endDay}, ${endYear}`;
+  // Cross-year
+  if (startYear !== endYear) {
+    return `${startMonthName} ${startDayOrdinal}, ${startYear} - ${endMonthName} ${endDayOrdinal}, ${endYear}`;
+  }
+
+  // Same year, different days
+  return `${startMonthName} ${startDayOrdinal} - ${endMonthName} ${endDayOrdinal}, ${startYear}`;
 }
 
 export interface EventSummaryCardProps {
@@ -109,7 +128,7 @@ export interface EventSummaryCardProps {
  * Features:
  * - Live in-progress beacon banner with real-time accent border
  * - Completed tournament top-rank badges and formatted date intervals
- * - 4-column sports telemetry grid (Rank, Record, Event OPR, High Score) with tabular numerals
+ * - 4-column sports telemetry grid (Rank, Record, Event OPR, High Score (NP)) or compact stage notice box
  * - 60fps UI-thread press interaction (0.985 scale over 120ms) and staggered entrance
  */
 export function EventSummaryCard({
@@ -123,8 +142,25 @@ export function EventSummaryCard({
   const scale = useSharedValue(1);
 
   const isLive = event.status === 'IN_PROGRESS';
-  const isTopRank = typeof event.rank === 'number' && event.rank <= 4;
   const dateRange = formatEventDateRange(event.dateStart, event.dateEnd);
+
+  // Match validation for qualification and team participation stages
+  const hasTeamMatches =
+    event.hasTeamMatches !== false &&
+    (event.matchesPlayed > 0 || event.hasTeamMatches === true);
+  const hasQualMatches =
+    event.hasQualMatches !== false && event.matchesPlayed > 0;
+
+  const showNoMatchesNotice =
+    event.hasTeamMatches === false ||
+    (!hasTeamMatches && !hasQualMatches) ||
+    (event.matchesPlayed === 0 && event.hasQualMatches === false);
+
+  const showNoQualNotice =
+    !showNoMatchesNotice && event.hasQualMatches === false;
+
+  const surfaceBg = colors.surface || '#15150B';
+  const surfaceElevatedBg = colors.surfaceElevated || '#1F1F10';
 
   const animatedPressStyle = useAnimatedStyle(() => {
     return {
@@ -146,6 +182,12 @@ export function EventSummaryCard({
 
   const staggeredDelay = Math.min(index * 55, 300);
 
+  const a11ySummary = showNoMatchesNotice
+    ? 'Team did not play any matches at this event'
+    : showNoQualNotice
+    ? 'Playoff Finals Stage • No Qualification Matches'
+    : `Rank ${event.rank ? `#${event.rank} of ${event.totalTeams}` : 'Unranked'}, Record ${event.wins} wins, ${event.losses} losses, ${event.ties} ties.`;
+
   return (
     <AnimatedPressable
       entering={
@@ -158,16 +200,14 @@ export function EventSummaryCard({
       onPressOut={handlePressOut}
       accessible
       accessibilityRole="button"
-      accessibilityLabel={`${event.name}, ${isLive ? 'Live Tournament in progress' : event.typeName}. Rank ${event.rank ? `#${event.rank} of ${event.totalTeams}` : 'Unranked'}, Record ${event.wins} wins, ${event.losses} losses, ${event.ties} ties.`}
+      accessibilityLabel={`${event.name}, ${isLive ? 'Live Tournament in progress' : event.typeName}. ${a11ySummary}`}
       accessibilityHint="Tap to view event overview, match results, and live queue schedule"
       style={[
         styles.cardContainer,
         isLive ? shadows.md : shadows.sm,
         {
-          backgroundColor: colors.card,
-          borderColor: isLive ? colors.statusLive : colors.border,
-          borderWidth: isLive ? 1.5 : 1,
-          borderRadius: radius.lg,
+          backgroundColor: surfaceBg,
+          borderRadius: radius.md,
           padding: spacing.base,
         },
         animatedPressStyle,
@@ -202,7 +242,7 @@ export function EventSummaryCard({
       ) : (
         <View style={styles.topRow}>
           <StatusBadge
-            variant={isTopRank ? 'gold' : 'neutral'}
+            variant="neutral"
             label={(event.typeName || 'TOURNAMENT').toUpperCase()}
             size="sm"
           />
@@ -258,14 +298,13 @@ export function EventSummaryCard({
 
         {/* Location Row */}
         <View style={[styles.locationRow, { marginTop: spacing.xs }]}>
-          <AppIcon name="location" size={13} color={colors.textMuted} />
+          <AppIcon name="location" size={13} color={colors.textMuted} style={styles.locationIcon} />
           <Text
             style={[
               typography.caption,
               styles.locationText,
               { color: colors.textMuted },
             ]}
-            numberOfLines={1}
           >
             {event.city}, {event.country}
             {event.venue ? ` • ${event.venue}` : ''}
@@ -274,122 +313,161 @@ export function EventSummaryCard({
       </View>
 
       {/* ─────────────────────────────────────────────────────────────
-          BOTTOM 4-METRIC TELEMETRY GRID
+          BOTTOM TELEMETRY GRID OR NOTICE BOX
          ───────────────────────────────────────────────────────────── */}
-      <View
-        style={[
-          styles.telemetryGrid,
-          {
-            borderTopColor: colors.borderSubtle,
-            marginTop: spacing.md,
-            paddingTop: spacing.sm,
-          },
-        ]}
-      >
-        {/* 1. RANK */}
-        <View style={styles.metricCell}>
+      {showNoMatchesNotice ? (
+        <View
+          style={[
+            styles.noticeBox,
+            {
+              backgroundColor: surfaceElevatedBg,
+              borderRadius: radius.sm,
+              marginTop: spacing.md,
+              padding: spacing.sm,
+            },
+          ]}
+        >
           <Text
             style={[
               typography.caption,
-              styles.metricLabel,
-              { color: colors.textMuted },
+              styles.noticeText,
+              { color: colors.textSecondary },
             ]}
-            numberOfLines={1}
           >
-            RANK
-          </Text>
-          <Text
-            style={[
-              typography.tabularNumber,
-              styles.metricValue,
-              { color: isTopRank ? colors.accentGold : colors.textPrimary },
-            ]}
-            numberOfLines={1}
-          >
-            {event.rank ? `#${event.rank} / ${event.totalTeams}` : '—'}
+            Team did not play any matches at this event
           </Text>
         </View>
-
-        {/* 2. RECORD */}
-        <View style={styles.metricCell}>
+      ) : showNoQualNotice ? (
+        <View
+          style={[
+            styles.noticeBox,
+            {
+              backgroundColor: surfaceElevatedBg,
+              borderRadius: radius.sm,
+              marginTop: spacing.md,
+              padding: spacing.sm,
+            },
+          ]}
+        >
           <Text
             style={[
               typography.caption,
-              styles.metricLabel,
-              { color: colors.textMuted },
+              styles.noticeText,
+              { color: colors.textSecondary },
             ]}
-            numberOfLines={1}
           >
-            RECORD
+            Playoff Finals Stage • No Qualification Matches
           </Text>
-          <Text
-            style={[
-              typography.tabularNumber,
-              styles.metricValue,
-              { color: colors.textPrimary },
-            ]}
-            numberOfLines={1}
-          >
-            {event.wins}-{event.losses}-{event.ties}
+        </View>
+      ) : (
+        <View
+          style={[
+            styles.telemetryGrid,
+            {
+              backgroundColor: surfaceElevatedBg,
+              borderRadius: radius.sm,
+              marginTop: spacing.md,
+              padding: spacing.sm,
+            },
+          ]}
+        >
+          {/* 1. RANK */}
+          <View style={styles.metricCell}>
             <Text
               style={[
-                styles.metricSubWinRate,
-                { color: colors.statusLive },
+                typography.caption,
+                styles.metricLabel,
+                { color: colors.textMuted },
               ]}
+              numberOfLines={1}
             >
-              {` (${event.winRate.toFixed(0)}%)`}
+              RANK
             </Text>
-          </Text>
-        </View>
+            <Text
+              style={[
+                typography.tabularNumber,
+                styles.metricValue,
+                { color: colors.textPrimary },
+              ]}
+              numberOfLines={1}
+            >
+              {event.rank ? `#${event.rank} / ${event.totalTeams}` : '—'}
+            </Text>
+          </View>
 
-        {/* 3. EVENT OPR */}
-        <View style={styles.metricCell}>
-          <Text
-            style={[
-              typography.caption,
-              styles.metricLabel,
-              { color: colors.textMuted },
-            ]}
-            numberOfLines={1}
-          >
-            EVENT OPR
-          </Text>
-          <Text
-            style={[
-              typography.tabularNumber,
-              styles.metricValue,
-              { color: colors.primary },
-            ]}
-            numberOfLines={1}
-          >
-            {event.totalOpr.toFixed(1)}
-          </Text>
-        </View>
+          {/* 2. RECORD */}
+          <View style={styles.metricCell}>
+            <Text
+              style={[
+                typography.caption,
+                styles.metricLabel,
+                { color: colors.textMuted },
+              ]}
+              numberOfLines={1}
+            >
+              RECORD
+            </Text>
+            <Text
+              style={[
+                typography.tabularNumber,
+                styles.metricValue,
+                { color: colors.textPrimary },
+              ]}
+              numberOfLines={1}
+            >
+              {event.wins}-{event.losses}-{event.ties}
+            </Text>
+          </View>
 
-        {/* 4. HIGH SCORE */}
-        <View style={styles.metricCell}>
-          <Text
-            style={[
-              typography.caption,
-              styles.metricLabel,
-              { color: colors.textMuted },
-            ]}
-            numberOfLines={1}
-          >
-            HIGH SCORE
-          </Text>
-          <Text
-            style={[
-              typography.tabularNumber,
-              styles.metricValue,
-              { color: colors.textPrimary },
-            ]}
-            numberOfLines={1}
-          >
-            {event.highScore} pts
-          </Text>
+          {/* 3. EVENT OPR */}
+          <View style={styles.metricCell}>
+            <Text
+              style={[
+                typography.caption,
+                styles.metricLabel,
+                { color: colors.textMuted },
+              ]}
+              numberOfLines={1}
+            >
+              EVENT OPR
+            </Text>
+            <Text
+              style={[
+                typography.tabularNumber,
+                styles.metricValue,
+                { color: colors.textPrimary },
+              ]}
+              numberOfLines={1}
+            >
+              {event.totalOpr.toFixed(1)}
+            </Text>
+          </View>
+
+          {/* 4. HIGH SCORE (NP) */}
+          <View style={styles.metricCell}>
+            <Text
+              style={[
+                typography.caption,
+                styles.metricLabel,
+                { color: colors.textMuted },
+              ]}
+              numberOfLines={1}
+            >
+              HIGH SCORE (NP)
+            </Text>
+            <Text
+              style={[
+                typography.tabularNumber,
+                styles.metricValue,
+                { color: colors.textPrimary },
+              ]}
+              numberOfLines={1}
+            >
+              {event.highScore} pts
+            </Text>
+          </View>
         </View>
-      </View>
+      )}
     </AnimatedPressable>
   );
 }
@@ -461,20 +539,25 @@ const styles = StyleSheet.create({
   },
   locationRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 4,
+  },
+  locationIcon: {
+    marginTop: 2,
+    flexShrink: 0,
   },
   locationText: {
     fontSize: 12,
     lineHeight: 16,
     fontWeight: '500',
     flex: 1,
+    flexShrink: 1,
   },
   telemetryGrid: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: 0,
     gap: 8,
   },
   metricCell: {
@@ -498,5 +581,17 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     fontWeight: '600',
     fontVariant: ['tabular-nums'],
+  },
+  noticeBox: {
+    minHeight: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 0,
+  },
+  noticeText: {
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    textAlign: 'center',
   },
 });

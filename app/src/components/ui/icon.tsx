@@ -21,7 +21,9 @@ export type AppIconName =
   | 'shield'
   | 'radio'
   | 'arrow-up-right'
-  | 'clock';
+  | 'clock'
+  | 'users'
+  | 'list';
 
 export interface AppIconProps {
   name: AppIconName;
@@ -49,6 +51,8 @@ const SF_SYMBOL_MAP: Record<AppIconName, SFSymbol> = {
   radio: 'dot.radiowaves.left.and.right',
   'arrow-up-right': 'arrow.up.right',
   clock: 'clock.fill',
+  users: 'person.2.fill',
+  list: 'list.number',
 };
 
 /**
@@ -672,6 +676,89 @@ function GeometricIconFallback({
                 borderRadius: 1,
               }}
             />
+          </View>
+        </View>
+      );
+    }
+
+    case 'users': {
+      const headSize = Math.round(size * 0.32);
+      const bodyWidth = Math.round(size * 0.52);
+      const bodyHeight = Math.round(size * 0.3);
+      return (
+        <View style={[styles.center, { width: size, height: size }]}>
+          {/* Two stylized user silhouettes */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'flex-end',
+              justifyContent: 'center',
+              width: size,
+              height: size,
+              paddingBottom: Math.round(size * 0.1),
+            }}
+          >
+            <View style={{ alignItems: 'center', marginRight: -Math.round(size * 0.08) }}>
+              <View
+                style={{
+                  width: headSize,
+                  height: headSize,
+                  borderRadius: headSize / 2,
+                  backgroundColor: color,
+                  marginBottom: 2,
+                }}
+              />
+              <View
+                style={{
+                  width: Math.round(bodyWidth * 0.75),
+                  height: bodyHeight,
+                  borderTopLeftRadius: bodyHeight * 0.7,
+                  borderTopRightRadius: bodyHeight * 0.7,
+                  backgroundColor: color,
+                }}
+              />
+            </View>
+            <View style={{ alignItems: 'center', marginLeft: Math.round(size * 0.02) }}>
+              <View
+                style={{
+                  width: Math.round(headSize * 0.85),
+                  height: Math.round(headSize * 0.85),
+                  borderRadius: (headSize * 0.85) / 2,
+                  backgroundColor: color,
+                  marginBottom: 2,
+                }}
+              />
+              <View
+                style={{
+                  width: Math.round(bodyWidth * 0.7),
+                  height: Math.round(bodyHeight * 0.85),
+                  borderTopLeftRadius: bodyHeight * 0.7,
+                  borderTopRightRadius: bodyHeight * 0.7,
+                  backgroundColor: color,
+                }}
+              />
+            </View>
+          </View>
+        </View>
+      );
+    }
+
+    case 'list': {
+      const lineLen = Math.round(size * 0.58);
+      const dotSz = Math.round(size * 0.14);
+      return (
+        <View style={[styles.center, { width: size, height: size }, { gap: Math.round(size * 0.12) }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', width: size, paddingHorizontal: Math.round(size * 0.12), gap: 6 }}>
+            <View style={{ width: dotSz, height: dotSz, borderRadius: dotSz / 2, backgroundColor: color }} />
+            <View style={{ flex: 1, height: strokeWidth, backgroundColor: color, borderRadius: strokeWidth / 2 }} />
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', width: size, paddingHorizontal: Math.round(size * 0.12), gap: 6 }}>
+            <View style={{ width: dotSz, height: dotSz, borderRadius: dotSz / 2, backgroundColor: color }} />
+            <View style={{ flex: 1, height: strokeWidth, backgroundColor: color, borderRadius: strokeWidth / 2 }} />
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', width: size, paddingHorizontal: Math.round(size * 0.12), gap: 6 }}>
+            <View style={{ width: dotSz, height: dotSz, borderRadius: dotSz / 2, backgroundColor: color }} />
+            <View style={{ flex: 1, height: strokeWidth, backgroundColor: color, borderRadius: strokeWidth / 2 }} />
           </View>
         </View>
       );

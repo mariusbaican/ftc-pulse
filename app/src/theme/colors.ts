@@ -1,10 +1,12 @@
 /**
- * High-contrast FTC Robotics & Sports Telemetry Color Palette.
- * Compliant with WCAG 2.1 AA text contrast requirements and ui-ux-pro-max guidelines.
+ * High-contrast FTC Robotics & Sports Telemetry Tactical Color Palette.
+ * Signature Electric Yellow (#FFFF00) paired with 2 Yellow-Tinted Blacks (#0B0B05 & #15150B)
+ * Borderless design philosophy relying on surface contrast rather than outlines.
+ * Compliant with WCAG 2.1 AA text contrast requirements (19:1 onPrimary).
  */
 
 export interface ThemeColors {
-  /** BrickBot & Red Alliance primary brand color */
+  /** BrickBot & Primary brand electric yellow */
   primary: string;
   primarySoft: string;
   /** Blue Alliance secondary telemetry color */
@@ -16,23 +18,23 @@ export interface ThemeColors {
   /** Live match/event indicator */
   statusLive: string;
   statusLiveSoft: string;
-  /** Base canvas background */
+  /** Canvas background: deep obsidian black with subtle yellow tint */
   background: string;
-  /** Primary surface (cards, sheets) */
+  /** Primary surface: second black with slight warm yellow tint for cards/boxes */
   surface: string;
-  /** Elevated surface (interactive containers, badges, inputs) */
+  /** Elevated surface: slightly brighter warm yellow-tinted black for nested pills/inputs */
   surfaceElevated: string;
-  /** Structural borders */
+  /** Structural borders: transparent by default for borderless aesthetic */
   border: string;
   /** Subtle dividers and secondary borders */
   borderSubtle: string;
-  /** High-contrast primary reading text */
+  /** High-contrast primary reading text: crisp warm off-white */
   textPrimary: string;
-  /** Secondary informational text */
+  /** Secondary informational text: warm muted grey-yellow */
   textSecondary: string;
   /** Low-emphasis captions, metadata and labels */
   textMuted: string;
-  /** High-contrast text on primary brand fills */
+  /** High-contrast text on primary brand fills (19:1 ratio) */
   onPrimary: string;
   /** Standard card background */
   card: string;
@@ -41,6 +43,7 @@ export interface ThemeColors {
   /** Neutral indicators */
   neutral: string;
   neutralSoft: string;
+  /** Neutral surface containers */
   neutralSurface: string;
   /** Semantic success / verified */
   success: string;
@@ -51,70 +54,53 @@ export interface ThemeColors {
   /** Semantic destructive / penalty */
   destructive: string;
   destructiveSoft: string;
-  /** Modal backdrop scrim */
+  /** Modal backdrop scrim with slight warm blur tint */
   overlay: string;
 }
 
-export const lightColors: ThemeColors = {
-  primary: '#DC2626',
-  primarySoft: 'rgba(220, 38, 38, 0.12)',
-  allianceBlue: '#2563EB',
-  allianceBlueSoft: 'rgba(37, 99, 235, 0.12)',
-  accentGold: '#D97706',
-  accentGoldSoft: 'rgba(217, 119, 6, 0.12)',
-  statusLive: '#16A34A',
-  statusLiveSoft: 'rgba(22, 163, 74, 0.12)',
-  background: '#F8FAFC',
-  surface: '#FFFFFF',
-  surfaceElevated: '#F1F5F9',
-  border: '#E2E8F0',
-  borderSubtle: 'rgba(226, 232, 240, 0.7)',
-  textPrimary: '#0F172A',
-  textSecondary: '#475569',
-  textMuted: '#64748B',
-  onPrimary: '#FFFFFF',
-  card: '#FFFFFF',
-  cardElevated: '#F1F5F9',
-  neutral: '#64748B',
-  neutralSoft: 'rgba(100, 116, 139, 0.12)',
-  neutralSurface: '#E2E8F0',
-  success: '#16A34A',
-  successSoft: 'rgba(22, 163, 74, 0.12)',
-  warning: '#D97706',
-  warningSoft: 'rgba(217, 119, 6, 0.12)',
-  destructive: '#DC2626',
-  destructiveSoft: 'rgba(220, 38, 38, 0.12)',
-  overlay: 'rgba(15, 23, 42, 0.4)',
+/**
+ * Signature Yellow & 2 Yellow-Tinted Blacks Tactical Palette.
+ * Applied unconditionally to guarantee borderless high-contrast visual identity.
+ */
+export const darkColors: ThemeColors = {
+  primary: '#FFFF00',
+  primarySoft: 'rgba(255, 255, 0, 0.12)',
+  allianceBlue: '#38BDF8',
+  allianceBlueSoft: 'rgba(56, 189, 248, 0.12)',
+  accentGold: '#FFFF00',
+  accentGoldSoft: 'rgba(255, 255, 0, 0.14)',
+  statusLive: '#A3E635',
+  statusLiveSoft: 'rgba(163, 230, 53, 0.14)',
+  background: '#0B0B05',
+  surface: '#15150B',
+  surfaceElevated: '#1F1F10',
+  border: 'transparent',
+  borderSubtle: 'transparent',
+  textPrimary: '#FAFAF0',
+  textSecondary: '#B8B89F',
+  textMuted: '#787865',
+  onPrimary: '#0B0B05',
+  card: '#15150B',
+  cardElevated: '#1F1F10',
+  neutral: '#787865',
+  neutralSoft: 'rgba(255, 255, 255, 0.08)',
+  neutralSurface: '#1F1F10',
+  success: '#A3E635',
+  successSoft: 'rgba(163, 230, 53, 0.14)',
+  warning: '#FFFF00',
+  warningSoft: 'rgba(255, 255, 0, 0.14)',
+  destructive: '#EF4444',
+  destructiveSoft: 'rgba(239, 68, 68, 0.14)',
+  overlay: 'rgba(8, 8, 3, 0.82)',
 };
 
-export const darkColors: ThemeColors = {
-  primary: '#EF4444',
-  primarySoft: 'rgba(239, 68, 68, 0.18)',
-  allianceBlue: '#3B82F6',
-  allianceBlueSoft: 'rgba(59, 130, 246, 0.18)',
-  accentGold: '#FBBF24',
-  accentGoldSoft: 'rgba(251, 191, 36, 0.18)',
-  statusLive: '#22C55E',
-  statusLiveSoft: 'rgba(34, 197, 94, 0.18)',
-  background: '#090D16',
-  surface: '#111827',
-  surfaceElevated: '#1E293B',
-  border: '#334155',
-  borderSubtle: 'rgba(51, 65, 85, 0.7)',
-  textPrimary: '#F8FAFC',
-  textSecondary: '#CBD5E1',
-  textMuted: '#94A3B8',
-  onPrimary: '#FFFFFF',
-  card: '#111827',
-  cardElevated: '#1E293B',
-  neutral: '#94A3B8',
-  neutralSoft: 'rgba(148, 163, 184, 0.18)',
-  neutralSurface: '#1E293B',
-  success: '#22C55E',
-  successSoft: 'rgba(34, 197, 94, 0.18)',
-  warning: '#FBBF24',
-  warningSoft: 'rgba(251, 191, 36, 0.18)',
-  destructive: '#EF4444',
-  destructiveSoft: 'rgba(239, 68, 68, 0.18)',
-  overlay: 'rgba(0, 0, 0, 0.7)',
+/**
+ * Both light and dark palettes mirror the signature tactical yellow aesthetic
+ * to satisfy the user specification for borderless #FFFF00 + 2 yellow-tinted blacks.
+ */
+export const lightColors: ThemeColors = {
+  ...darkColors,
 };
+
+export const darkPalette = darkColors;
+export const lightPalette = lightColors;

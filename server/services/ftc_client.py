@@ -23,10 +23,37 @@ from config import (
     FTC_SEASON,
     TARGET_TEAM,
     FALLBACK_SNAPSHOT_PATH,
+    HISTORICAL_SNAPSHOT_PATH,
+    TEAM_DATA_STORE_PATH,
+    CACHE_TTL_SECONDS,
 )
 
 logger = logging.getLogger("ftc_client")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+
+def is_store_fresh(store_path: str = TEAM_DATA_STORE_PATH, ttl_seconds: int = CACHE_TTL_SECONDS) -> bool:
+    """
+    Checks if the persistent team data store JSON file exists and was updated
+    within the TTL threshold (defaults to 86,400 seconds / 24 hours).
+    """
+    if not os.path.exists(store_path):
+        return False
+    try:
+        with open(store_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        last_updated_str = data.get("lastUpdated")
+        if not last_updated_str:
+            return False
+        last_updated_dt = datetime.fromisoformat(last_updated_str)
+        if last_updated_dt.tzinfo is None:
+            last_updated_dt = last_updated_dt.replace(tzinfo=timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        age_seconds = (now_utc - last_updated_dt).total_seconds()
+        return 0 <= age_seconds < ttl_seconds
+    except Exception as e:
+        logger.warning(f"Failed to check store freshness for {store_path}: {e}")
+        return False
 
 
 def get_authenticated_session() -> requests.Session:
@@ -47,8 +74,9 @@ def get_authenticated_session() -> requests.Session:
         })
 
     retry_strategy = Retry(
-        total=3,
-        backoff_factor=1,
+        total=1,
+        connect=0,
+        backoff_factor=0.3,
         status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["GET"]
     )
@@ -89,6 +117,18 @@ def load_from_snapshot() -> Optional[Dict[str, Any]]:
             return data
     except Exception as e:
         logger.error(f"Failed to read fallback snapshot from {FALLBACK_SNAPSHOT_PATH}: {e}")
+        return None
+
+
+def load_historical_snapshot(path: str = HISTORICAL_SNAPSHOT_PATH) -> Optional[Dict[str, Any]]:
+    """Loads historical raw seasons snapshot (2020-2024) if present."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to read historical snapshot from {path}: {e}")
         return None
 
 
@@ -136,7 +176,7 @@ def fetch_or_load_season_raw_data(force_refresh: bool = False) -> Dict[str, Any]
         
         # 1. Team profile
         teams_url = f"{base_season_url}/teams?teamNumber={TARGET_TEAM}"
-        teams_resp = session.get(teams_url, timeout=15)
+        teams_resp = session.get(teams_url, timeout=3.0)
         teams_resp.raise_for_status()
         teams_json = teams_resp.json()
         teams_list = teams_json.get("teams", [])
@@ -149,7 +189,7 @@ def fetch_or_load_season_raw_data(force_refresh: bool = False) -> Dict[str, Any]
 
         # 2. Events list
         events_url = f"{base_season_url}/events?teamNumber={TARGET_TEAM}"
-        events_resp = session.get(events_url, timeout=15)
+        events_resp = session.get(events_url, timeout=3.0)
         events_resp.raise_for_status()
         events_json = events_resp.json()
         raw_events = events_json.get("events", [])
@@ -168,7 +208,7 @@ def fetch_or_load_season_raw_data(force_refresh: bool = False) -> Dict[str, Any]
             # Rankings
             rankings_list: List[Dict[str, Any]] = []
             try:
-                r_resp = session.get(f"{base_season_url}/rankings/{code}", timeout=15)
+                r_resp = session.get(f"{base_season_url}/rankings/{code}", timeout=3.0)
                 if r_resp.status_code == 200:
                     r_data = r_resp.json()
                     rankings_list = r_data.get("rankings") or r_data.get("Rankings") or []
@@ -178,7 +218,7 @@ def fetch_or_load_season_raw_data(force_refresh: bool = False) -> Dict[str, Any]
             # Matches
             matches_list: List[Dict[str, Any]] = []
             try:
-                m_resp = session.get(f"{base_season_url}/matches/{code}", timeout=15)
+                m_resp = session.get(f"{base_season_url}/matches/{code}", timeout=3.0)
                 if m_resp.status_code == 200:
                     m_data = m_resp.json()
                     matches_list = m_data.get("matches") or m_data.get("Matches") or []
@@ -188,7 +228,7 @@ def fetch_or_load_season_raw_data(force_refresh: bool = False) -> Dict[str, Any]
             # Qual scores
             qual_scores_list: List[Dict[str, Any]] = []
             try:
-                qs_resp = session.get(f"{base_season_url}/scores/{code}/qual", timeout=15)
+                qs_resp = session.get(f"{base_season_url}/scores/{code}/qual", timeout=3.0)
                 if qs_resp.status_code == 200:
                     qs_data = qs_resp.json()
                     qual_scores_list = qs_data.get("matchScores") or qs_data.get("scores") or []
@@ -198,7 +238,7 @@ def fetch_or_load_season_raw_data(force_refresh: bool = False) -> Dict[str, Any]
             # Playoff scores (gracefully handle 404/empty)
             playoff_scores_list: List[Dict[str, Any]] = []
             try:
-                ps_resp = session.get(f"{base_season_url}/scores/{code}/playoff", timeout=15)
+                ps_resp = session.get(f"{base_season_url}/scores/{code}/playoff", timeout=3.0)
                 if ps_resp.status_code == 200:
                     ps_data = ps_resp.json()
                     playoff_scores_list = ps_data.get("matchScores") or ps_data.get("scores") or []
@@ -227,7 +267,7 @@ def fetch_or_load_season_raw_data(force_refresh: bool = False) -> Dict[str, Any]
         return normalized_payload
 
     except Exception as e:
-        logger.error(f"Live API ingestion failed: {e}. Attempting fallback to snapshot.", exc_info=True)
+        logger.info(f"Live API ingestion unreachable ({e}). Loading fallback snapshot.")
         snapshot_data = load_from_snapshot()
         if snapshot_data:
             return snapshot_data

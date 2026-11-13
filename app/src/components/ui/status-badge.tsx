@@ -11,7 +11,14 @@ import Animated, {
 import { useAppTheme } from '@/theme';
 import { AppIcon, AppIconName } from './icon';
 
-export type StatusBadgeVariant = 'live' | 'red' | 'blue' | 'gold' | 'neutral' | 'success';
+export type StatusBadgeVariant =
+  | 'live'
+  | 'red'
+  | 'destructive'
+  | 'blue'
+  | 'gold'
+  | 'neutral'
+  | 'success';
 
 export interface StatusBadgeProps {
   label: string;
@@ -25,8 +32,9 @@ export interface StatusBadgeProps {
 }
 
 /**
- * Reusable Telemetry Status Pill Badge.
- * Adheres to sports analytics high-contrast theming and reduced-motion accessibility guidelines.
+ * Reusable Tactical Status Pill Badge.
+ * Adheres to borderless yellow/black sports analytics theming, small corner radiuses,
+ * and reduced-motion accessibility guidelines.
  */
 export function StatusBadge({
   label,
@@ -38,7 +46,7 @@ export function StatusBadge({
   textStyle,
   accessibilityLabel,
 }: StatusBadgeProps) {
-  const { colors, typography } = useAppTheme();
+  const { colors, typography, radius } = useAppTheme();
   const reducedMotion = useReducedMotion();
 
   const pulseOpacity = useSharedValue(1);
@@ -66,7 +74,6 @@ export function StatusBadge({
 
   const getVariantStyles = (): {
     backgroundColor: string;
-    borderColor: string;
     textColor: string;
     dotColor: string;
   } => {
@@ -74,35 +81,31 @@ export function StatusBadge({
       case 'live':
         return {
           backgroundColor: colors.statusLiveSoft,
-          borderColor: colors.statusLive,
           textColor: colors.statusLive,
           dotColor: colors.statusLive,
         };
       case 'red':
+      case 'destructive':
         return {
-          backgroundColor: colors.primarySoft,
-          borderColor: colors.primary,
-          textColor: colors.primary,
-          dotColor: colors.primary,
+          backgroundColor: colors.destructiveSoft,
+          textColor: colors.destructive,
+          dotColor: colors.destructive,
         };
       case 'blue':
         return {
           backgroundColor: colors.allianceBlueSoft,
-          borderColor: colors.allianceBlue,
           textColor: colors.allianceBlue,
           dotColor: colors.allianceBlue,
         };
       case 'gold':
         return {
           backgroundColor: colors.accentGoldSoft,
-          borderColor: colors.accentGold,
           textColor: colors.accentGold,
           dotColor: colors.accentGold,
         };
       case 'success':
         return {
           backgroundColor: colors.successSoft,
-          borderColor: colors.success,
           textColor: colors.success,
           dotColor: colors.success,
         };
@@ -110,7 +113,6 @@ export function StatusBadge({
       default:
         return {
           backgroundColor: colors.surfaceElevated,
-          borderColor: colors.border,
           textColor: colors.textSecondary,
           dotColor: colors.neutral,
         };
@@ -132,7 +134,7 @@ export function StatusBadge({
         isSm ? styles.sizeSm : styles.sizeMd,
         {
           backgroundColor: vStyles.backgroundColor,
-          borderColor: vStyles.borderColor,
+          borderRadius: radius.full,
         },
         style,
       ]}
@@ -179,8 +181,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 9999,
-    borderWidth: 1,
+    borderWidth: 0,
     borderCurve: 'continuous',
     alignSelf: 'flex-start',
   },

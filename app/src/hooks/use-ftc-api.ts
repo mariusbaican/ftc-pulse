@@ -19,7 +19,7 @@ import {
 /**
  * Screen presentation statuses following the Four-State rule from expo-data-fetching.
  */
-export type ScreenDataStatus = 'loading' | 'error' | 'empty' | 'success';
+export type ScreenDataStatus = 'loading' | 'error' | 'empty' | 'success' | 'idle';
 
 /**
  * Result shape returned by useApiQuery and domain hooks.
@@ -173,23 +173,25 @@ export function useServerHealth(): UseApiQueryResult<HealthResponse> {
  * Hook for team search with debouncing.
  * Debounces non-empty query typing by debounceMs while executing empty query
  * immediately so clearing search is instant.
- * Passes isEmptyFn: (res) => res.teams.length === 0.
+ *
+ * Prevents "No results" flash before debounced search resolves by immediately
+ * flagging isLoading: true and status: 'loading' when query !== debouncedQuery.
  */
 export function useTeamSearch(
   query: string,
   debounceMs = 180
 ): UseApiQueryResult<TeamSearchResponse> {
-  const [debouncedQuery, setDebouncedQuery] = useState(query);
+  const [debouncedQuery, setDebouncedQuery] = useState(query.trim());
 
   useEffect(() => {
     const trimmed = query.trim();
     if (trimmed.length === 0) {
-      setDebouncedQuery(query);
+      setDebouncedQuery('');
       return;
     }
 
     const timer = setTimeout(() => {
-      setDebouncedQuery(query);
+      setDebouncedQuery(trimmed);
     }, debounceMs);
 
     return () => {
@@ -197,23 +199,63 @@ export function useTeamSearch(
     };
   }, [query, debounceMs]);
 
-  return useApiQuery(
-    (signal) => searchTeams(debouncedQuery, signal),
+  const queryResult = useApiQuery(
+    (signal) => {
+      if (debouncedQuery.trim().length === 0) {
+        return Promise.resolve({
+          query: '',
+          count: 0,
+          teams: [],
+          pocNotice: null,
+        });
+      }
+      return searchTeams(debouncedQuery, signal);
+    },
     [debouncedQuery],
     (res) => res.teams.length === 0
   );
+
+  const trimmedQuery = query.trim();
+  const trimmedDebounced = debouncedQuery.trim();
+
+  // When query is empty, immediately reset data to null, isLoading to false, and status to 'idle'
+  if (trimmedQuery.length === 0) {
+    return {
+      data: null,
+      status: 'idle',
+      isLoading: false,
+      isRefreshing: false,
+      error: null,
+      refetch: queryResult.refetch,
+    };
+  }
+
+  // When query is non-empty and debounce is pending, immediately treat as loading
+  if (trimmedQuery !== trimmedDebounced) {
+    return {
+      data: null,
+      status: 'loading',
+      isLoading: true,
+      isRefreshing: false,
+      error: null,
+      refetch: queryResult.refetch,
+    };
+  }
+
+  return queryResult;
 }
 
 /**
- * Hook for season summary, W-L-T record, and global OPR.
+ * Hook for season summary, W-L-T record, global OPR, and multi-season switching.
  * Defaults to BrickBot #15996.
  */
 export function useTeamSeasonSummary(
-  teamNumber = 15996
+  teamNumber = 15996,
+  season?: number
 ): UseApiQueryResult<SeasonSummaryResponse> {
   return useApiQuery(
-    (signal) => fetchTeamSeasonSummary(teamNumber, signal),
-    [teamNumber],
+    (signal) => fetchTeamSeasonSummary(teamNumber, season, signal),
+    [teamNumber, season],
     (res) => res.events.length === 0
   );
 }

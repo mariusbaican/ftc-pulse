@@ -32,13 +32,19 @@ export async function searchTeams(
 /**
  * Retrieves the aggregated season summary, record, OPR breakdown, period averages,
  * best match, and full events list for a team (defaults to BrickBot #15996).
- * GET /api/teams/${teamNumber}/season-summary
+ * Supports optional multi-season querying (?season=${season}).
+ * GET /api/teams/${teamNumber}/season-summary?season=${season}
  */
 export async function fetchTeamSeasonSummary(
   teamNumber = 15996,
+  season?: number,
   signal?: AbortSignal
 ): Promise<SeasonSummaryResponse> {
-  return apiClient.get<SeasonSummaryResponse>(`/api/teams/${teamNumber}/season-summary`, { signal });
+  const queryParam = season !== undefined ? `?season=${season}` : '';
+  return apiClient.get<SeasonSummaryResponse>(
+    `/api/teams/${teamNumber}/season-summary${queryParam}`,
+    { signal }
+  );
 }
 
 /**

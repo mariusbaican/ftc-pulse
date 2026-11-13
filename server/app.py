@@ -1,7 +1,8 @@
 import os
 import sys
+import json
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 # Ensure server root directory is at the beginning of the python import path
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,9 +12,21 @@ if SERVER_DIR not in sys.path:
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from config import FTC_SEASON, SERVER_PORT, TARGET_TEAM
-from services.analytics import compute_event_opr, process_all_season_data
-from services.ftc_client import fetch_or_load_season_raw_data
+from config import (
+    FTC_SEASON,
+    SERVER_PORT,
+    TARGET_TEAM,
+    TEAM_DATA_STORE_PATH,
+    CACHE_TTL_SECONDS,
+    SUPPORTED_SEASONS,
+)
+from services.analytics import (
+    compute_event_opr,
+    process_all_season_data,
+    build_complete_multi_season_store,
+    AVAILABLE_SEASONS,
+)
+from services.ftc_client import fetch_or_load_season_raw_data, is_store_fresh
 from services.mock_event import alert_manager, build_mock_championship_event
 
 # Initialize Flask application
@@ -32,17 +45,39 @@ DATA_SOURCE_META: Dict[str, Any] = {
 def init_data_store(force_refresh: bool = False) -> Dict[str, Any]:
     """
     Initializes or refreshes the in-memory data store.
-    Fetches raw season data (live API or fallback snapshot), generates the
-    mock championship event, and runs full analytical aggregation.
+    Checks if server/data/brickbot_15996_store.json exists and is fresh (< 24h).
+    If fresh and not force_refresh, loads directly from file without external requests.
+    Otherwise queries raw season data (falling back to snapshot if offline),
+    builds all seasons, attaches Biobuzz mock event, writes to persistent store, and serves it.
     """
     global DATA_STORE, DATA_SOURCE_META
 
+    if not force_refresh and is_store_fresh(TEAM_DATA_STORE_PATH, CACHE_TTL_SECONDS):
+        try:
+            with open(TEAM_DATA_STORE_PATH, "r", encoding="utf-8") as f:
+                DATA_STORE = json.load(f)
+            DATA_SOURCE_META["dataSource"] = DATA_STORE.get("dataSource", "fallback_snapshot")
+            DATA_SOURCE_META["fetchedAt"] = DATA_STORE.get(
+                "fetchedAt", DATA_STORE.get("lastUpdated", datetime.now(timezone.utc).isoformat())
+            )
+            return DATA_STORE
+        except Exception:
+            pass
+
     raw_data = fetch_or_load_season_raw_data(force_refresh=force_refresh)
     mock_bundle = build_mock_championship_event()
-    DATA_STORE = process_all_season_data(raw_data, mock_bundle)
+    DATA_STORE = build_complete_multi_season_store(raw_data, mock_bundle)
 
-    DATA_SOURCE_META["dataSource"] = raw_data.get("source", "fallback_snapshot")
-    DATA_SOURCE_META["fetchedAt"] = raw_data.get(
+    # Persist store to disk
+    try:
+        os.makedirs(os.path.dirname(TEAM_DATA_STORE_PATH), exist_ok=True)
+        with open(TEAM_DATA_STORE_PATH, "w", encoding="utf-8") as f:
+            json.dump(DATA_STORE, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+    DATA_SOURCE_META["dataSource"] = DATA_STORE.get("dataSource", "fallback_snapshot")
+    DATA_SOURCE_META["fetchedAt"] = DATA_STORE.get(
         "fetchedAt", datetime.now(timezone.utc).isoformat()
     )
     return DATA_STORE
@@ -52,6 +87,41 @@ def init_data_store(force_refresh: bool = False) -> Dict[str, Any]:
 init_data_store(force_refresh=False)
 
 
+def resolve_season_key(raw_season: Optional[str]) -> str:
+    """
+    Maps user-supplied season parameter to a standard year string ("2026", "2025", etc.).
+    """
+    if not raw_season:
+        return "2026"
+    cleaned = str(raw_season).strip().lower()
+    alias_map = {
+        "2026": "2026",
+        "biobuzz": "2026",
+        "2025": "2025",
+        "decode": "2025",
+        "2024": "2024",
+        "into the deep": "2024",
+        "intothedeep": "2024",
+        "2023": "2023",
+        "centerstage": "2023",
+        "2022": "2022",
+        "power play": "2022",
+        "powerplay": "2022",
+        "2021": "2021",
+        "freight frenzy": "2021",
+        "freightfrenzy": "2021",
+        "2020": "2020",
+        "ultimate goal": "2020",
+        "ultimategoal": "2020",
+        "2019": "2019",
+        "skystone": "2019",
+        "2018": "2018",
+        "rover ruckus": "2018",
+        "roverruckus": "2018",
+    }
+    return alias_map.get(cleaned, cleaned)
+
+
 # -----------------------------------------------------------------------------
 # REST API Endpoints
 # -----------------------------------------------------------------------------
@@ -59,7 +129,8 @@ init_data_store(force_refresh=False)
 @app.route("/api/health", methods=["GET"])
 def health_check():
     """
-    Returns server health, season info, target team, data source, and event count.
+    Returns server health, season info, target team, data source, event count,
+    lastUpdated timestamp, cache TTL in seconds, and available seasons list.
     """
     events_count = len(DATA_STORE.get("eventsByCode", {}))
     return jsonify({
@@ -69,6 +140,9 @@ def health_check():
         "dataSource": DATA_SOURCE_META.get("dataSource", "fallback_snapshot"),
         "fetchedAt": DATA_SOURCE_META.get("fetchedAt", ""),
         "eventsCount": events_count,
+        "lastUpdated": DATA_STORE.get("lastUpdated", DATA_SOURCE_META.get("fetchedAt", "")),
+        "cacheTtlSeconds": CACHE_TTL_SECONDS,
+        "availableSeasons": DATA_STORE.get("availableSeasons", []),
     }), 200
 
 
@@ -76,27 +150,24 @@ def health_check():
 def search_teams():
     """
     Team search endpoint (PoC).
-    Resolves searches matching BrickBot #15996. Non-matching queries return an empty
-    list along with a notice explaining the PoC scope.
+    Resolves searches matching BrickBot #15996. Non-matching or empty queries return an empty
+    list (count: 0, teams: [], pocNotice: None).
     """
     raw_query = request.args.get("query", "")
     cleaned = raw_query.strip().lower()
+    q_norm = cleaned.replace("#", "").strip()
 
-    valid_targets = [
-        "15996",
-        "brickbot",
-        "colegiul national unirea",
-        "focsani",
-        "#15996",
-    ]
-
-    matches = (
-        cleaned == ""
-        or any(cleaned in t for t in valid_targets)
-        or any(t in cleaned for t in valid_targets)
+    is_match = bool(
+        q_norm != ""
+        and (
+            q_norm in "15996"
+            or "15996" in q_norm
+            or q_norm in "brickbot"
+            or "brickbot" in q_norm
+        )
     )
 
-    if matches:
+    if is_match:
         team_profile = DATA_STORE.get("team", {})
         return jsonify({
             "query": raw_query,
@@ -109,10 +180,7 @@ def search_teams():
             "query": raw_query,
             "count": 0,
             "teams": [],
-            "pocNotice": (
-                "Team not found. In this proof of concept, only BrickBot #15996 data is hosted. "
-                "Multi-team lookup will be available in future releases."
-            ),
+            "pocNotice": None,
         }), 200
 
 
@@ -120,7 +188,8 @@ def search_teams():
 def get_season_summary(team_number: int):
     """
     Returns the aggregated season summary, global OPR, period averages, W-L-T record,
-    best match, best event, and event list for the specified team.
+    best match, best event, event list, available seasons, and full seasonsByYear map.
+    Supports optional ?season=<int|string> query parameter (defaults to 2026 Biobuzz).
     """
     if team_number != TARGET_TEAM:
         return jsonify({
@@ -128,7 +197,23 @@ def get_season_summary(team_number: int):
             "message": f"Only team {TARGET_TEAM} (BrickBot) is supported in this PoC.",
         }), 404
 
-    return jsonify(DATA_STORE.get("seasonSummary", {})), 200
+    raw_season = request.args.get("season")
+    season_key = resolve_season_key(raw_season)
+
+    seasons_by_year = DATA_STORE.get("seasonsByYear", {})
+    available_seasons = DATA_STORE.get("availableSeasons", [])
+    last_updated = DATA_STORE.get("lastUpdated", DATA_SOURCE_META.get("fetchedAt", ""))
+
+    if season_key not in seasons_by_year:
+        season_key = "2026" if "2026" in seasons_by_year else "2025"
+
+    summary_data = dict(seasons_by_year.get(season_key, {}))
+    # Ensure availableSeasons, seasonsByYear, and lastUpdated are attached to every response
+    summary_data["availableSeasons"] = available_seasons
+    summary_data["seasonsByYear"] = seasons_by_year
+    summary_data["lastUpdated"] = last_updated
+
+    return jsonify(summary_data), 200
 
 
 @app.route("/api/events/<string:event_code>/details", methods=["GET"])
@@ -136,7 +221,7 @@ def get_event_details(event_code: str):
     """
     Returns full details for an event: metadata, computed stats (OPR, period averages),
     and match schedule. Case-insensitive lookup against DATA_STORE['eventsByCode'].
-    For the mock championship, attaches any currently active queue alert.
+    For mock championship events, attaches any currently active queue alert.
     """
     events_by_code = DATA_STORE.get("eventsByCode", {})
     matched_key = None
@@ -150,11 +235,11 @@ def get_event_details(event_code: str):
     if not matched_key:
         return jsonify({
             "error": "EVENT_NOT_FOUND",
-            "message": f"Event '{event_code}' not found for team {TARGET_TEAM} in {FTC_SEASON} season.",
+            "message": f"Event '{event_code}' not found for team {TARGET_TEAM}.",
         }), 404
 
     event_payload = dict(events_by_code[matched_key])
-    if matched_key.lower() == "2025_mock_championship":
+    if matched_key.lower() in ("2025_mock_championship", "2026_biobuzz_mock_championship"):
         event_payload["activeAlert"] = alert_manager.get_current_alert().get("alert")
     else:
         event_payload["activeAlert"] = None

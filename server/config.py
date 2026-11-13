@@ -23,3 +23,7 @@ FTC_SEASON = int(os.getenv("FTC_SEASON", "2025"))
 TARGET_TEAM = int(os.getenv("TARGET_TEAM", "15996"))
 SERVER_PORT = int(os.getenv("PORT", "5050"))
 FALLBACK_SNAPSHOT_PATH = os.path.join(SERVER_DIR, "data", "fallback_snapshot.json")
+HISTORICAL_SNAPSHOT_PATH = os.path.join(SERVER_DIR, "data", "brickbot_15996_historical_raw.json")
+TEAM_DATA_STORE_PATH = os.path.join(SERVER_DIR, "data", "brickbot_15996_store.json")
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "86400"))
+SUPPORTED_SEASONS = [2026, 2025, 2024, 2023, 2022, 2021, 2020]

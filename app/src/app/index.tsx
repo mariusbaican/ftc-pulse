@@ -1,514 +1,472 @@
-import React, { useState } from 'react';
+import React, { useCallback } from 'react';
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAppTheme } from '@/theme';
-import { useServerHealth, useTeamSearch } from '@/hooks/use-ftc-api';
-import { apiClient } from '@/services/api/client';
+import { useServerHealth, useTeamSeasonSummary, useTeamSearch } from '@/hooks/use-ftc-api';
 import { AppIcon } from '@/components/ui/icon';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { BrickBotTeamCard } from '@/components/search/brickbot-team-card';
+import { useSearchModal } from '@/components/navigation/floating-search-modal';
 import type { TeamProfile } from '@/types/api';
 
-interface QuickFilterOption {
-  label: string;
-  value: string;
-  accessibilityHint: string;
+const DEFAULT_BRICKBOT_PROFILE: TeamProfile = {
+  teamNumber: 15996,
+  displayTeamNumber: '15996',
+  nameShort: 'BrickBot',
+  nameFull: 'BrickBot #15996 (Colegiul National Unirea)',
+  city: 'Focșani',
+  stateProv: 'Vrancea',
+  country: 'Romania',
+  displayLocation: 'Focșani, Vrancea, Romania',
+  rookieYear: 2018,
+  season: 2026,
+  seasonName: 'Biobuzz',
+};
+
+interface FeatureCardData {
+  id: string;
+  badge: string;
+  iconName: 'chart' | 'bell' | 'shield' | 'video';
+  title: string;
+  description: string;
 }
 
-const QUICK_FILTERS: QuickFilterOption[] = [
-  { label: '#15996', value: '15996', accessibilityHint: 'Search for BrickBot team number 15996' },
-  { label: 'BrickBot', value: 'BrickBot', accessibilityHint: 'Search for BrickBot by team name' },
+const PULSE_FEATURES: FeatureCardData[] = [
   {
-    label: 'Test Unhosted Team (#11111)',
-    value: '11111',
-    accessibilityHint: 'Filter by non-hosted team 11111 to test the PoC empty state message',
+    id: 'opr-analytics',
+    badge: 'MATRIX TELEMETRY',
+    iconName: 'chart',
+    title: 'Multi-Season Ridge OPR & Analytics (2018 – 2026 Biobuzz)',
+    description:
+      'Solves regularized least-squares matrix equations (AᵀA + λI)X = AᵀB to isolate Autonomous, Driver-Controlled TeleOp, and Endgame scoring power across every BrickBot season.',
   },
-  { label: 'Show Default', value: '', accessibilityHint: 'Clear search filter to view default BrickBot' },
+  {
+    id: 'queue-alerts',
+    badge: 'SMARTWATCH DISPATCH',
+    iconName: 'bell',
+    title: 'Live Tournament & Match Queue Alerts',
+    description:
+      'Tracks the active Biobuzz championship in real time and forwards high-priority match queueing notifications directly to paired smartwatches.',
+  },
+  {
+    id: 'period-breakdowns',
+    badge: 'ALLIANCE DYNAMICS',
+    iconName: 'shield',
+    title: 'Alliance Scoreboards & Period Breakdowns',
+    description:
+      'Inspects every qualification and playoff match with Red vs. Blue alliance station lineups, penalty adjustments, and win-rate trajectories.',
+  },
+  {
+    id: 'vod-seeking',
+    badge: 'BROADCAST SYNC',
+    iconName: 'video',
+    title: 'Synchronized Livestream & VOD Chapter Seeking',
+    description:
+      'Jumps straight to any match’s exact timestamp in the embedded tournament broadcast stream.',
+  },
 ];
 
-export default function TeamSearchScreen() {
-  const [query, setQuery] = useState('');
-  const { colors, typography, spacing, radius, shadows } = useAppTheme();
+export default function HomeScreen() {
+  const { colors, typography, spacing, radius } = useAppTheme();
+  const { openSearch } = useSearchModal();
 
-  const { data: healthData, status: healthStatus } = useServerHealth();
-  const { data, status, isLoading, isRefreshing, error, refetch } = useTeamSearch(query);
+  // Palette tokens prioritizing the sharp #FFFF00 yellow design
+  const yellowPrimary = colors.primary || '#FFFF00';
+  const yellowOnPrimary = colors.onPrimary || '#0B0B05';
+  const surfaceBg = colors.surface || '#15150B';
+  const surfaceElevatedBg = colors.surfaceElevated || '#1F1F10';
+  const canvasBg = colors.background || '#0B0B05';
 
-  const team: TeamProfile | undefined = data?.teams?.[0];
+  const {
+    data: healthData,
+    isRefreshing: isHealthRefreshing,
+    refetch: refetchHealth,
+  } = useServerHealth();
 
-  const getHealthBadgeConfig = () => {
-    if (healthStatus === 'loading') {
-      return {
-        label: 'CONNECTING...',
-        variant: 'neutral' as const,
-        pulsing: false,
-      };
-    }
-    if (healthStatus === 'success') {
-      const sourceLabel =
-        healthData?.dataSource === 'live_api' ? 'LIVE FTC API' : '2025 SNAPSHOT';
-      return {
-        label: `API ONLINE • ${sourceLabel}`,
-        variant: 'live' as const,
-        pulsing: true,
-      };
-    }
-    return {
-      label: 'API OFFLINE',
-      variant: 'red' as const,
-      pulsing: false,
-    };
-  };
+  const {
+    data: teamData,
+    isRefreshing: isTeamRefreshing,
+    refetch: refetchTeam,
+  } = useTeamSeasonSummary(15996);
 
-  const healthConfig = getHealthBadgeConfig();
+  const { data: searchData } = useTeamSearch('15996');
+
+  const isRefreshing = isHealthRefreshing || isTeamRefreshing;
+
+  const handleRefresh = useCallback(async () => {
+    await Promise.allSettled([refetchHealth(), refetchTeam()]);
+  }, [refetchHealth, refetchTeam]);
+
+  const brickBotProfile: TeamProfile =
+    searchData?.teams?.[0] ?? DEFAULT_BRICKBOT_PROFILE;
+
+  const liveEventsCount =
+    teamData?.events?.filter((ev) => ev.status === 'IN_PROGRESS').length ?? 0;
+
+  const lastUpdatedDisplay =
+    healthData?.lastUpdated ||
+    teamData?.lastUpdated ||
+    (healthData?.fetchedAt
+      ? `Fetched ${new Date(healthData.fetchedAt).toLocaleTimeString()}`
+      : '24h Cached Snapshot');
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView
+      edges={['top', 'left', 'right']}
+      style={[styles.safeArea, { backgroundColor: canvasBg }]}
+    >
       <ScrollView
-        contentContainerStyle={[styles.scrollContent, { paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl }]}
+        contentContainerStyle={[
+          styles.scrollContainer,
+          {
+            paddingHorizontal: spacing.base,
+            paddingTop: spacing.sm,
+            paddingBottom: spacing.xxl,
+          },
+        ]}
+        showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={refetch}
-            tintColor={colors.primary}
-            colors={[colors.primary]}
+            onRefresh={handleRefresh}
+            tintColor={yellowPrimary}
+            colors={[yellowPrimary]}
           />
         }
       >
-        {/* Top Telemetry Header */}
-        <View style={styles.headerContainer}>
-          <View style={styles.telemetryBadgeRow}>
-            <View
-              style={[
-                styles.brandBadge,
-                {
-                  backgroundColor: colors.primarySoft,
-                  borderColor: colors.primary,
-                  borderRadius: radius.full,
-                },
-              ]}
-            >
-              <Text style={[typography.caption, { color: colors.primary, fontWeight: '700' }]}>
-                FTC PULSE • 2025 DECODE
-              </Text>
-            </View>
-
-            <StatusBadge
-              label={healthConfig.label}
-              variant={healthConfig.variant}
-              pulsing={healthConfig.pulsing}
-            />
-          </View>
-
-          <Text style={[typography.hero, styles.headerTitle, { color: colors.textPrimary, marginTop: spacing.sm }]}>
-            Team Intelligence &amp; Live Companion
-          </Text>
-          <Text style={[typography.body, styles.headerSubtitle, { color: colors.textSecondary, marginTop: spacing.xs }]}>
-            Search by FTC team number or name to inspect 2025 OPR, match schedules, and live queueing alerts.
-          </Text>
-        </View>
-
-        {/* Interactive Search Bar */}
+        {/* =========================================================================
+            1. Hero Box ("What is FTC Pulse?")
+           ========================================================================= */}
         <View
           style={[
-            styles.searchBarContainer,
-            shadows.sm,
+            styles.heroBox,
             {
-              backgroundColor: colors.card,
-              borderColor: colors.border,
+              backgroundColor: surfaceBg,
               borderRadius: radius.md,
-              marginTop: spacing.md,
+              padding: spacing.lg,
             },
           ]}
         >
-          <View style={styles.searchIconContainer}>
-            <AppIcon name="search" size={20} color={colors.textMuted} />
-          </View>
-
-          <TextInput
+          {/* Sharp #FFFF00 Tag */}
+          <View
             style={[
-              typography.body,
-              styles.searchInput,
+              styles.heroTag,
               {
-                color: colors.textPrimary,
+                backgroundColor: yellowPrimary,
+                borderRadius: radius.sm,
               },
             ]}
-            placeholder="Search team # or name (e.g. 15996, BrickBot)..."
-            placeholderTextColor={colors.textMuted}
-            value={query}
-            onChangeText={setQuery}
-            autoCorrect={false}
-            autoCapitalize="none"
-            returnKeyType="search"
-            accessibilityLabel="Search team number or name"
-          />
-
-          {query.trim().length > 0 && (
-            <Pressable
-              onPress={() => setQuery('')}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Clear search query"
-              style={({ pressed }) => [
-                styles.clearButton,
-                {
-                  opacity: pressed ? 0.6 : 1,
-                },
+          >
+            <Text
+              style={[
+                typography.caption,
+                styles.heroTagText,
+                { color: yellowOnPrimary },
               ]}
             >
-              <AppIcon name="close" size={18} color={colors.textSecondary} />
+              FIRST TECH CHALLENGE • TELEMETRY & LIVE COMPANION
+            </Text>
+          </View>
+
+          {/* Headline */}
+          <Text
+            style={[
+              typography.largeTitle,
+              styles.heroHeadline,
+              { color: colors.textPrimary, marginTop: spacing.md },
+            ]}
+          >
+            Real-Time Competition Intelligence for FTC Robotics.
+          </Text>
+
+          {/* Description */}
+          <Text
+            style={[
+              typography.body,
+              styles.heroDescription,
+              { color: colors.textSecondary, marginTop: spacing.sm },
+            ]}
+          >
+            FTC Pulse is a dedicated mobile telemetry, scouting, and tournament
+            companion built to cut through the chaos of FIRST Tech Challenge
+            competitions. It unifies multi-season FIRST API analytics,
+            Ridge-regularized OPR modeling, live match schedules, VOD timestamp
+            playback, and instant smartwatch queueing alerts in a single
+            low-latency interface.
+          </Text>
+
+          {/* CTAs */}
+          <View style={[styles.heroActionsRow, { marginTop: spacing.lg }]}>
+            {/* Button 1: Explore BrickBot #15996 Telemetry */}
+            <Pressable
+              onPress={() => router.push('/teams/15996')}
+              style={({ pressed }) => [
+                styles.primaryCtaButton,
+                {
+                  backgroundColor: yellowPrimary,
+                  borderRadius: radius.sm,
+                  opacity: pressed ? 0.88 : 1,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Explore BrickBot #15996 Telemetry"
+            >
+              <Text
+                style={[
+                  typography.headline,
+                  styles.ctaButtonText,
+                  { color: yellowOnPrimary },
+                ]}
+              >
+                Explore BrickBot #15996 Telemetry
+              </Text>
+              <AppIcon
+                name="chevron-right"
+                size={18}
+                color={yellowOnPrimary}
+              />
             </Pressable>
-          )}
+
+            {/* Button 2: Open Quick Team Search */}
+            <Pressable
+              onPress={openSearch}
+              style={({ pressed }) => [
+                styles.secondaryCtaButton,
+                {
+                  backgroundColor: surfaceElevatedBg,
+                  borderRadius: radius.sm,
+                  marginTop: spacing.sm,
+                  opacity: pressed ? 0.85 : 1,
+                },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Open Quick Team Search"
+            >
+              <AppIcon
+                name="search"
+                size={16}
+                color={yellowPrimary}
+                style={styles.searchButtonIcon}
+              />
+              <Text
+                style={[
+                  typography.subhead,
+                  styles.secondaryCtaText,
+                  { color: yellowPrimary },
+                ]}
+              >
+                Open Quick Team Search
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
-        {/* Quick Filter Chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={[styles.chipsContainer, { marginTop: spacing.sm }]}
-        >
-          {QUICK_FILTERS.map((filter) => {
-            const isSelected =
-              filter.value === ''
-                ? query.trim() === ''
-                : query.trim().toLowerCase() === filter.value.toLowerCase();
+        {/* =========================================================================
+            2. "What FTC Pulse Can Do" — 4 Borderless Feature Boxes
+           ========================================================================= */}
+        <View style={[styles.sectionContainer, { marginTop: spacing.xl }]}>
+          <View style={styles.sectionHeader}>
+            <Text
+              style={[
+                typography.caption,
+                styles.sectionPretitle,
+                { color: yellowPrimary },
+              ]}
+            >
+              CAPABILITIES & ARCHITECTURE
+            </Text>
+            <Text
+              style={[
+                typography.title,
+                styles.sectionTitle,
+                { color: colors.textPrimary, marginTop: 2 },
+              ]}
+            >
+              What FTC Pulse Can Do
+            </Text>
+          </View>
 
-            return (
-              <Pressable
-                key={filter.label}
-                onPress={() => setQuery(filter.value)}
-                accessibilityRole="button"
-                accessibilityLabel={filter.label}
-                accessibilityHint={filter.accessibilityHint}
-                style={({ pressed }) => [
-                  styles.filterChip,
+          <View style={[styles.featuresGrid, { marginTop: spacing.md }]}>
+            {PULSE_FEATURES.map((feature) => (
+              <View
+                key={feature.id}
+                style={[
+                  styles.featureBox,
                   {
-                    backgroundColor: isSelected ? colors.primary : colors.surfaceElevated,
-                    borderColor: isSelected ? colors.primary : colors.border,
-                    borderRadius: radius.full,
-                    opacity: pressed ? 0.8 : 1,
+                    backgroundColor: surfaceBg,
+                    borderRadius: radius.md,
+                    padding: spacing.base,
+                    marginBottom: spacing.md,
                   },
                 ]}
               >
+                <View style={styles.featureTopRow}>
+                  <View
+                    style={[
+                      styles.featureIconChip,
+                      {
+                        backgroundColor: surfaceElevatedBg,
+                        borderRadius: radius.sm,
+                      },
+                    ]}
+                  >
+                    <AppIcon
+                      name={feature.iconName}
+                      size={18}
+                      color={yellowPrimary}
+                    />
+                  </View>
+                  <View
+                    style={[
+                      styles.featureTag,
+                      {
+                        backgroundColor: surfaceElevatedBg,
+                        borderRadius: radius.sm,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        typography.caption,
+                        styles.featureTagText,
+                        { color: yellowPrimary },
+                      ]}
+                    >
+                      {feature.badge}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text
+                  style={[
+                    typography.headline,
+                    styles.featureTitle,
+                    { color: colors.textPrimary, marginTop: spacing.sm },
+                  ]}
+                >
+                  {feature.title}
+                </Text>
+
                 <Text
                   style={[
                     typography.subhead,
-                    {
-                      color: isSelected ? colors.onPrimary : colors.textSecondary,
-                      fontWeight: isSelected ? '700' : '600',
-                    },
+                    styles.featureDesc,
+                    { color: colors.textSecondary, marginTop: spacing.xs },
                   ]}
                 >
-                  {filter.label}
+                  {feature.description}
                 </Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
+              </View>
+            ))}
+          </View>
+        </View>
 
-        {/* Dynamic Presentation States */}
-        <View style={[styles.stateSection, { marginTop: spacing.lg }]}>
-          {/* State 1: Loading State */}
-          {isLoading && !data && (
-            <View
-              style={[
-                styles.stateCard,
-                {
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                  borderRadius: radius.lg,
-                  padding: spacing.xl,
-                },
-              ]}
-            >
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text
-                style={[
-                  typography.body,
-                  { color: colors.textSecondary, marginTop: spacing.md, textAlign: 'center' },
-                ]}
-              >
-                Querying FTC 2025 Team Directory...
-              </Text>
-            </View>
-          )}
-
-          {/* State 2: Error State */}
-          {status === 'error' && !data && (
-            <View
-              style={[
-                styles.stateCard,
-                {
-                  backgroundColor: colors.card,
-                  borderColor: colors.destructive,
-                  borderRadius: radius.lg,
-                  padding: spacing.xl,
-                },
-              ]}
-            >
-              <AppIcon name="alert-circle" size={36} color={colors.destructive} />
-              <Text style={[typography.title, { color: colors.textPrimary, marginTop: spacing.md }]}>
-                Backend Connection Error
-              </Text>
-              <Text
-                style={[
-                  typography.body,
-                  { color: colors.textSecondary, textAlign: 'center', marginTop: spacing.xs },
-                ]}
-              >
-                {error?.message || 'Unable to reach the FTC Pulse local analytics server.'}
-              </Text>
-
-              <View
-                style={[
-                  styles.endpointCallout,
-                  {
-                    backgroundColor: colors.surfaceElevated,
-                    borderColor: colors.border,
-                    borderRadius: radius.sm,
-                    padding: spacing.sm,
-                    marginTop: spacing.md,
-                  },
-                ]}
-              >
-                <Text style={[typography.caption, { color: colors.textMuted }]}>API BASE URL</Text>
+        {/* =========================================================================
+            3. Featured Team Spotlight Box (`BrickBot #15996`)
+           ========================================================================= */}
+        <View style={[styles.sectionContainer, { marginTop: spacing.lg }]}>
+          <View style={styles.sectionHeader}>
+            <View style={styles.spotlightHeaderRow}>
+              <View>
                 <Text
                   style={[
-                    typography.mono,
-                    { color: colors.textPrimary, marginTop: spacing.xs },
+                    typography.caption,
+                    styles.sectionPretitle,
+                    { color: yellowPrimary },
                   ]}
-                  numberOfLines={1}
                 >
-                  {apiClient.getBaseUrl()}
+                  FEATURED TEAM SPOTLIGHT
+                </Text>
+                <Text
+                  style={[
+                    typography.title,
+                    styles.sectionTitle,
+                    { color: colors.textPrimary, marginTop: 2 },
+                  ]}
+                >
+                  Team #15996 BrickBot
                 </Text>
               </View>
 
-              <Pressable
-                onPress={() => refetch()}
-                style={({ pressed }) => [
-                  styles.primaryActionButton,
-                  {
-                    backgroundColor: colors.primary,
-                    borderRadius: radius.sm,
-                    marginTop: spacing.lg,
-                    opacity: pressed ? 0.85 : 1,
-                  },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Retry Connection"
-              >
-                <AppIcon name="refresh" size={16} color={colors.onPrimary} />
-                <Text style={[typography.headline, { color: colors.onPrimary, marginLeft: spacing.xs }]}>
-                  Retry Connection
-                </Text>
-              </Pressable>
+              <StatusBadge
+                variant={liveEventsCount > 0 ? 'live' : 'gold'}
+                label={
+                  liveEventsCount > 0
+                    ? `${liveEventsCount} LIVE EVENT`
+                    : '2026 BIOBUZZ'
+                }
+                pulsing={liveEventsCount > 0}
+              />
             </View>
-          )}
+          </View>
 
-          {/* State 3: Empty State (Proof of Concept Non-15996 Notice) */}
-          {status === 'empty' && (
-            <View
+          {/* BrickBot Card (with borderless style override and small corner radius) */}
+          <View style={{ marginTop: spacing.sm }}>
+            <BrickBotTeamCard
+              team={brickBotProfile}
+              liveEventCount={liveEventsCount}
+              onPress={() => router.push('/teams/15996')}
               style={[
-                styles.stateCard,
-                shadows.sm,
+                styles.brickBotCardOverride,
                 {
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                  borderRadius: radius.lg,
-                  padding: spacing.xl,
+                  backgroundColor: surfaceBg,
+                  borderRadius: radius.md,
                 },
               ]}
-            >
-              <View
-                style={[
-                  styles.emptyStateIconContainer,
-                  {
-                    backgroundColor: colors.accentGoldSoft,
-                    borderRadius: radius.full,
-                  },
-                ]}
-              >
-                <AppIcon name="shield" size={32} color={colors.accentGold} />
-              </View>
+            />
+          </View>
 
-              <Text style={[typography.title, { color: colors.textPrimary, marginTop: spacing.md, textAlign: 'center' }]}>
-                Team Not Found in PoC
-              </Text>
-
-              <Text
-                style={[
-                  typography.body,
-                  {
-                    color: colors.textSecondary,
-                    textAlign: 'center',
-                    marginTop: spacing.sm,
-                    lineHeight: 22,
-                  },
-                ]}
-              >
-                {data?.pocNotice ||
-                  'Team not found. In this proof of concept, only BrickBot #15996 data is hosted. Multi-team lookup will be available in future releases.'}
-              </Text>
-
-              <Pressable
-                onPress={() => setQuery('')}
-                style={({ pressed }) => [
-                  styles.primaryActionButton,
-                  {
-                    backgroundColor: colors.primary,
-                    borderRadius: radius.md,
-                    marginTop: spacing.xl,
-                    opacity: pressed ? 0.85 : 1,
-                  },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Reset Filter to BrickBot #15996"
-              >
-                <Text style={[typography.headline, { color: colors.onPrimary }]}>
-                  Reset Filter to BrickBot #15996
-                </Text>
-              </Pressable>
-            </View>
-          )}
-
-          {/* State 4: Success State (BrickBot Result Found) */}
-          {status === 'success' && team && (
-            <View style={styles.successContainer}>
-              <Text style={[typography.caption, { color: colors.textSecondary, marginBottom: spacing.xs, fontWeight: '700' }]}>
-                MATCHING FTC TEAM PROFILE
-              </Text>
-
-              {/* High-emphasis Sports Telemetry Team Card */}
-              <BrickBotTeamCard
-                team={team}
-                onPress={() => router.push('/teams/15996')}
-              />
-
-              {/* 2025 Season Telemetry Capabilities Overview Grid */}
-              <View style={[styles.capabilitiesSection, { marginTop: spacing.xl }]}>
-                <View style={styles.sectionTitleRow}>
-                  <Text style={[typography.headline, { color: colors.textPrimary }]}>
-                    2025 Season Telemetry Capabilities
-                  </Text>
-                  <StatusBadge variant="gold" label="DECODE" />
-                </View>
-
-                <View style={[styles.capabilitiesGrid, { marginTop: spacing.md }]}>
-                  <View
-                    style={[
-                      styles.capabilityTile,
-                      shadows.sm,
-                      {
-                        backgroundColor: colors.card,
-                        borderColor: colors.border,
-                        borderRadius: radius.md,
-                        padding: spacing.md,
-                      },
-                    ]}
-                  >
-                    <View style={styles.capabilityHeader}>
-                      <AppIcon name="chart" size={18} color={colors.primary} />
-                      <Text style={[typography.subhead, { color: colors.textPrimary, marginLeft: spacing.xs, fontWeight: '700' }]}>
-                        Ridge OPR Engine
-                      </Text>
-                    </View>
-                    <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.xs }]}>
-                      Least-squares regression matrix solving for Auto, TeleOp, and Endgame ratings.
-                    </Text>
-                  </View>
-
-                  <View
-                    style={[
-                      styles.capabilityTile,
-                      shadows.sm,
-                      {
-                        backgroundColor: colors.card,
-                        borderColor: colors.border,
-                        borderRadius: radius.md,
-                        padding: spacing.md,
-                      },
-                    ]}
-                  >
-                    <View style={styles.capabilityHeader}>
-                      <AppIcon name="trophy" size={18} color={colors.accentGold} />
-                      <Text style={[typography.subhead, { color: colors.textPrimary, marginLeft: spacing.xs, fontWeight: '700' }]}>
-                        13 Official + 1 Live Event
-                      </Text>
-                    </View>
-                    <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.xs }]}>
-                      Full match breakdown from FIRST FTC Events API plus real-time simulated championship.
-                    </Text>
-                  </View>
-
-                  <View
-                    style={[
-                      styles.capabilityTile,
-                      shadows.sm,
-                      {
-                        backgroundColor: colors.card,
-                        borderColor: colors.border,
-                        borderRadius: radius.md,
-                        padding: spacing.md,
-                      },
-                    ]}
-                  >
-                    <View style={styles.capabilityHeader}>
-                      <AppIcon name="bell" size={18} color={colors.statusLive} />
-                      <Text style={[typography.subhead, { color: colors.textPrimary, marginLeft: spacing.xs, fontWeight: '700' }]}>
-                        Smartwatch Queue Alerts
-                      </Text>
-                    </View>
-                    <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.xs }]}>
-                      Background polling with wearable-compatible high-importance notifications.
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Direct Shortcut to TeamHomeScreen */}
-                <Pressable
-                  onPress={() => router.push('/teams/15996')}
-                  style={({ pressed }) => [
-                    styles.shortcutCard,
-                    shadows.sm,
-                    {
-                      backgroundColor: colors.surfaceElevated,
-                      borderColor: colors.border,
-                      borderRadius: radius.md,
-                      padding: spacing.md,
-                      marginTop: spacing.md,
-                      opacity: pressed ? 0.85 : 1,
-                    },
+          {/* Live Server Cache & 24h Auto-Sync Status Strip */}
+          <View
+            style={[
+              styles.cacheStatusStrip,
+              {
+                backgroundColor: surfaceElevatedBg,
+                borderRadius: radius.sm,
+                padding: spacing.md,
+                marginTop: spacing.sm,
+              },
+            ]}
+          >
+            <View style={styles.cacheStatusRow}>
+              <View style={styles.cacheStatusLeft}>
+                <View
+                  style={[
+                    styles.syncPulseDot,
+                    { backgroundColor: yellowPrimary },
                   ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Explore BrickBot #15996 Analytics"
-                  accessibilityHint="Navigates to the team season summary and tournament schedule"
+                />
+                <Text
+                  style={[
+                    typography.caption,
+                    styles.syncStatusText,
+                    { color: colors.textPrimary },
+                  ]}
                 >
-                  <View style={styles.shortcutContent}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[typography.headline, { color: colors.textPrimary }]}>
-                        Explore BrickBot #15996 Analytics
-                      </Text>
-                      <Text style={[typography.caption, { color: colors.textSecondary, marginTop: spacing.xs }]}>
-                        Tap to inspect 14 tournaments, period breakdowns, and live queueing.
-                      </Text>
-                    </View>
-                    <AppIcon name="arrow-up-right" size={20} color={colors.primary} />
-                  </View>
-                </Pressable>
+                  24h Auto-Sync Active • FIRST Tech Challenge API Connected
+                </Text>
               </View>
             </View>
-          )}
+            <Text
+              style={[
+                typography.caption,
+                styles.cacheTimestampText,
+                { color: colors.textMuted, marginTop: spacing.xs },
+              ]}
+            >
+              Telemetry Cache: {lastUpdatedDisplay}
+            </Text>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -516,121 +474,145 @@ export default function TeamSearchScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
   },
-  scrollContent: {
+  scrollContainer: {
     flexGrow: 1,
   },
-  headerContainer: {
-    paddingTop: 8,
+  // Hero Section
+  heroBox: {
+    borderWidth: 0,
   },
-  telemetryBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  brandBadge: {
+  heroTag: {
+    alignSelf: 'flex-start',
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderWidth: 1,
+    paddingVertical: 4,
+    borderWidth: 0,
   },
-  headerTitle: {
-    letterSpacing: -0.5,
+  heroTagText: {
+    fontWeight: '800',
+    letterSpacing: 0.6,
   },
-  headerSubtitle: {
-    lineHeight: 20,
+  heroHeadline: {
+    fontWeight: '800',
+    lineHeight: 34,
   },
-  searchBarContainer: {
+  heroDescription: {
+    lineHeight: 22,
+  },
+  heroActionsRow: {
+    width: '100%',
+  },
+  primaryCtaButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    minHeight: 52,
-    paddingHorizontal: 12,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 16,
+    borderWidth: 0,
   },
-  searchIconContainer: {
+  ctaButtonText: {
+    fontWeight: '700',
+    marginRight: 6,
+  },
+  secondaryCtaButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 42,
+    paddingHorizontal: 16,
+    borderWidth: 0,
+  },
+  searchButtonIcon: {
     marginRight: 8,
   },
-  searchInput: {
-    flex: 1,
-    paddingVertical: 12,
-    fontSize: 15,
+  secondaryCtaText: {
+    fontWeight: '600',
   },
-  clearButton: {
-    minWidth: 44,
-    minHeight: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  chipsContainer: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingVertical: 4,
-  },
-  filterChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderWidth: 1,
-    minHeight: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stateSection: {
-    flex: 1,
-  },
-  stateCard: {
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyStateIconContainer: {
-    width: 64,
-    height: 64,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  endpointCallout: {
-    alignSelf: 'stretch',
-    borderWidth: 1,
-  },
-  primaryActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    minHeight: 44,
-    alignSelf: 'stretch',
-  },
-  successContainer: {
+  // Section Headers
+  sectionContainer: {
     width: '100%',
   },
-  capabilitiesSection: {
+  sectionHeader: {
+    marginBottom: 4,
+  },
+  sectionPretitle: {
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  sectionTitle: {
+    fontWeight: '700',
+  },
+  // Features Grid
+  featuresGrid: {
     width: '100%',
   },
-  sectionTitleRow: {
+  featureBox: {
+    borderWidth: 0,
+  },
+  featureTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  capabilitiesGrid: {
-    gap: 10,
-  },
-  capabilityTile: {
-    borderWidth: 1,
-  },
-  capabilityHeader: {
-    flexDirection: 'row',
+  featureIconChip: {
+    width: 36,
+    height: 36,
     alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 0,
   },
-  shortcutCard: {
-    borderWidth: 1,
-    minHeight: 44,
+  featureTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 0,
   },
-  shortcutContent: {
+  featureTagText: {
+    fontWeight: '700',
+    fontSize: 10,
+    letterSpacing: 0.5,
+  },
+  featureTitle: {
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  featureDesc: {
+    lineHeight: 20,
+  },
+  // Spotlight
+  spotlightHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  brickBotCardOverride: {
+    borderWidth: 0,
+  },
+  cacheStatusStrip: {
+    borderWidth: 0,
+  },
+  cacheStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cacheStatusLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  syncPulseDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  syncStatusText: {
+    fontWeight: '600',
+    flex: 1,
+  },
+  cacheTimestampText: {
+    fontSize: 11,
   },
 });

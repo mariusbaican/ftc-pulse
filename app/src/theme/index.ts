@@ -1,6 +1,5 @@
 import { Platform, ViewStyle } from 'react-native';
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { darkColors, lightColors, ThemeColors } from './colors';
+import { darkColors, darkPalette, lightColors, lightPalette, ThemeColors } from './colors';
 import { radius, spacing, RadiusKey, SpacingKey } from './spacing';
 import { typography, TypographyVariant } from './typography';
 
@@ -8,12 +7,12 @@ export * from './colors';
 export * from './spacing';
 export * from './typography';
 
-export const shadows: Record<'sm' | 'md' | 'lg', ViewStyle> = {
+export const shadows: Record<'sm' | 'md' | 'lg' | 'glow', ViewStyle> = {
   sm: Platform.select({
     ios: {
       shadowColor: '#000000',
       shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.08,
+      shadowOpacity: 0.25,
       shadowRadius: 3,
     },
     android: {
@@ -25,7 +24,7 @@ export const shadows: Record<'sm' | 'md' | 'lg', ViewStyle> = {
     ios: {
       shadowColor: '#000000',
       shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.12,
+      shadowOpacity: 0.35,
       shadowRadius: 8,
     },
     android: {
@@ -37,13 +36,27 @@ export const shadows: Record<'sm' | 'md' | 'lg', ViewStyle> = {
     ios: {
       shadowColor: '#000000',
       shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: 0.18,
+      shadowOpacity: 0.45,
       shadowRadius: 16,
     },
     android: {
       elevation: 8,
     },
     default: {},
+  }) as ViewStyle,
+  glow: Platform.select({
+    ios: {
+      shadowColor: '#FFFF00',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.28,
+      shadowRadius: 18,
+    },
+    android: {
+      elevation: 12,
+    },
+    default: {
+      boxShadow: '0 0 24px rgba(255, 255, 0, 0.22)',
+    },
   }) as ViewStyle,
 };
 
@@ -60,12 +73,13 @@ export interface AppTheme {
 
 /**
  * Primary theme hook for FTC Pulse application screens and components.
- * Returns light or dark semantic colors, typography styles, 4pt spacing tokens, and shadow presets.
+ * Returns the signature #FFFF00 electric yellow & 2 yellow-tinted blacks (#0B0B05 & #15150B)
+ * borderless palette, tactical typography, and sharp radius tokens.
  */
 export function useAppTheme(): AppTheme {
-  const scheme = useColorScheme();
-  const isDark = scheme === 'dark';
-  const colors = isDark ? darkColors : lightColors;
+  // Always render in signature yellow & 2 yellow-tinted blacks aesthetic
+  const isDark = true;
+  const colors = darkColors;
 
   return {
     colors,
